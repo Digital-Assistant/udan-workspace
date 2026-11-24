@@ -38,3 +38,8 @@ certs/
 node_modules/
 .likec4/
 .DS_Store
+
+# MariaDB runtime files.
+/infra/mariadb/logs/*
+!/infra/mariadb/logs/.gitkeep
+/infra/mariadb/data/
