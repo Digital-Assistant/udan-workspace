@@ -19,9 +19,9 @@ udan-workspace/
 ├── README.md, AGENTS.md, CONTRIBUTING.md, LICENSE
 ├── repos.yaml                  # the public repositories, their branch and build/run commands
 ├── repos.local.example.yaml    # format for your own extra repositories (copy to repos.local.yaml)
-├── udan                        # the workspace command (coming in a later phase)
+├── udan                        # the workspace command (./udan --help)
 ├── docs/                       # cross-repository docs
-├── infra/                      # shared local infrastructure (coming in a later phase)
+├── infra/                      # shared local infrastructure (compose files, realms, nginx)
 ├── Digital-Assistant-Server/   # cloned, not tracked here
 ├── Digital_Assistant_Client/   # cloned, not tracked here
 └── Digital-Assistant-SDK/      # cloned, not tracked here
@@ -43,7 +43,8 @@ npm, so the two build on their own. There is no local linking between them.
 
 ## Quick start
 
-You need `git`, Docker with Compose, JDK 21 and Node 22.
+You need `git`, Docker with the Compose plugin, `openssl`, `jq`, `curl`, JDK 21 (on `JAVA_HOME` or `PATH`),
+Node 22 and `npm`. `./udan bootstrap` checks them all and lists every missing one.
 
 1. Clone the workspace:
 
@@ -52,17 +53,44 @@ You need `git`, Docker with Compose, JDK 21 and Node 22.
    cd udan-workspace
    ```
 
-2. Clone and build the repositories: `./udan bootstrap`. *Coming in a later phase.* Until then, clone each
-   repository in `repos.yaml` into the workspace root with `git clone --branch dev <url> <path>`. Then run its
-   `build` command in its directory.
-3. Start the shared infrastructure: `./udan up infra`. *Coming in a later phase.*
-4. Check that the infrastructure is ready: `./udan doctor`. *Coming in a later phase.*
-5. Start a repository: run its `run` command from `repos.yaml` in its directory.
+2. Clone and build the repositories: `./udan bootstrap`. It clones each repository in `repos.yaml` into the
+   workspace root and runs its `build` command. On a second run it fast-forwards each checkout that is clean and
+   on its branch, and leaves the others as they are. `./udan bootstrap server` limits it to one repository.
+3. Start the shared infrastructure: `./udan up infra`. The first run creates `infra/.env` from
+   `infra/.env.example` and a self-signed dev certificate.
+4. Check that everything is ready: `./udan doctor`. It exits non-zero and names the fix when a check fails.
+5. Start a repository: run its `run` command from `repos.yaml` in its directory. `./udan up all` starts the
+   infrastructure and prints these commands. It does not start the dev servers itself, because each one runs in
+   the foreground.
 
-## Extra repositories
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `./udan bootstrap [name] [--no-build]` | Check tools, clone or update the repositories, build them |
+| `./udan up infra` | Create `infra/.env` and the certificate if missing, then start the network, MariaDB, Postgres, Keycloak, Elasticsearch and Nginx in that order |
+| `./udan up all` | `up infra`, then print each repository's `run` command |
+| `./udan down` | Stop the containers in reverse order; data stays |
+| `./udan clean [--yes]` | Ask, stop, then remove the containers, their volumes and the network (all local data) |
+| `./udan status` | Container state and health; each repository's branch and changes |
+| `./udan doctor [--json]` | Tools, Docker, `.env`, certificates, containers, ports, logins, realms, Elasticsearch, Server |
+| `./udan reload nginx` | Test the nginx configuration, then reload it |
+
+Every command works from any directory (`/path/to/udan-workspace/udan status`). `--dry-run` prints the
+commands that would change something instead of running them.
+
+## Extra repositories and local overrides
 
 Your team may use repositories that are not public. List them in `repos.local.yaml`, in the same format as
 `repos.yaml`. Git ignores that file. Copy [`repos.local.example.yaml`](repos.local.example.yaml) to start.
+
+The same file overrides fields of a listed repository: `url` (also a local folder), `path`, `branch`, `build`,
+`run` and `ref`. With `in_place: true`, `./udan bootstrap` uses an existing checkout as it is: no clone, no pull
+and no branch switch.
+
+An extra repository can add its own nginx routes: it drops `*.conf` files with whole `server` blocks into
+`infra/nginx/conf.d/extra/` (ignored by git) and runs `./udan reload nginx`. See
+[`infra/nginx/README.md`](infra/nginx/README.md).
 
 ## Docs
 

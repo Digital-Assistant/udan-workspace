@@ -3,10 +3,8 @@
 This page lists the services the Server and the SDK need on a developer machine. It is for an engineer who sets
 up or debugs the local stack.
 
-> [!NOTE]
-> Planned. The workspace `infra/` folder and the `./udan up infra` command arrive in a later phase of the workspace
-> setup. Until then the services run from an infrastructure setup outside this repository. The services, images and
-> ports below are the ones that setup uses today, and `infra/` keeps them.
+The workspace [`infra/`](../../infra/README.md) folder holds the compose files, and `./udan` starts, stops and
+checks them.
 
 ## Services
 
@@ -21,9 +19,35 @@ up or debugs the local stack.
 The Server itself runs on the host, not in a container, on port 11081. Its start script checks these services
 first: see the Server [`README.md`, "Getting Started"][server-start].
 
+## Commands
+
+| Command | What it does |
+|---|---|
+| `./udan up infra` | Creates `infra/.env` and the certificate if missing, creates the network, then starts the services below in order. Running containers are left as they are |
+| `./udan down` | Stops the containers in reverse order. Data stays in the volumes |
+| `./udan status` | State and health of each container |
+| `./udan doctor` | Checks tools, Docker, `infra/.env`, certificates, containers, ports, database and Keycloak logins, realms, Elasticsearch and the Server. Exits 1 on a failed check |
+| `./udan reload nginx` | Runs `nginx -t` in the container, then reloads nginx |
+| `./udan clean` | Asks, stops the stack, then removes the containers, their named volumes and the network. `infra/.env` and the certificates stay |
+
+Add `--dry-run` to print the Docker commands instead of running them.
+
+## Folder map
+
+| Path | Content |
+|---|---|
+| `infra/<service>/docker-compose-<service>.yaml` | One compose file per service; the folder name is the compose project name |
+| `infra/.env.example`, `infra/.env` | Dev settings and passwords. `.env` is created from the example and ignored by git |
+| `infra/mariadb/init/`, `infra/postgres/init/` | First-start scripts that create the databases and users |
+| `infra/keycloak/realms/` | Realm files imported into a fresh Keycloak |
+| `infra/keycloak/conf/keycloak.conf` | Keycloak settings |
+| `infra/nginx/conf.d/` | Nginx configuration; `extra/` takes extra `server` blocks |
+| `infra/nginx/localhost/`, `infra/keycloak/certs/` | The generated dev certificate (ignored by git) |
+
 ## Network and start order
 
-All containers join the Docker network `uda-network`. The start order follows the dependencies:
+All containers join the Docker network `uda-network` (172.20.0.0/16). `./udan up infra` creates it when it is
+missing. The start order follows the dependencies:
 
 ```mermaid
 flowchart LR
@@ -35,14 +59,24 @@ flowchart LR
     NGX --> SRV["Server on the host"]
 ```
 
-Stop runs in the reverse order. Always start and stop the stack with the scripts, never with raw `docker` commands
+After each start `./udan` waits a fixed time: MariaDB 10 s, Postgres 5 s, Keycloak 15 s, Elasticsearch 10 s,
+Nginx 2 s. After MariaDB it also waits until the user `udan` can run `SELECT 1` (30 tries, 2 s apart). Stop runs in
+the reverse order. Always start and stop the stack with `./udan`, never with raw `docker` commands
 ([`AGENTS.md`](../../AGENTS.md), "Local stack").
+
+## Settings and passwords
+
+`infra/.env` holds every password the stack uses. `./udan up infra` creates it from `infra/.env.example`, whose
+values are dev-only placeholders. The databases and Keycloak read these values only when their volume is new. A
+volume created earlier keeps its own passwords. When `./udan doctor` reports a refused login, either put the
+values the volume was created with into `infra/.env`, or run `./udan clean` and start again.
 
 ## Certificates
 
-The start step creates one self-signed development certificate when it is missing, unreadable or close to expiry.
-Nginx and Keycloak use it for TLS, and MariaDB uses it for its TLS port. The services load the certificate at
-start, so restart them after a new one is made. Certificates are never committed: the workspace `.gitignore`
+`./udan up infra` runs `scripts/infra-certs.sh`, which creates one self-signed development certificate when it
+is missing, unreadable or close to expiry. Nginx and Keycloak use it for TLS, and MariaDB uses it for its TLS
+port. The services load the certificate at start, so restart them (`./udan down`, then `./udan up infra`) after
+a new one is made. Certificates are never committed: the workspace `.gitignore`
 ignores `certs/`, `*.pem`, `*.key` and `*.crt`.
 
 ## Keycloak realms
@@ -53,12 +87,19 @@ ignores `certs/`, `*.pem`, `*.key` and `*.crt`.
 | `UDAN-Plugin` | Server tenant `UDAN-Plugin`; the browser extension | `backend-service` (confidential, legacy sign-in), `udan-extension` (public, PKCE) |
 | `master` | Keycloak administration | Keycloak defaults |
 
-The public client `udan-extension` uses authorization code with PKCE (S256). It has no secret and no direct
+The realm files are in [`infra/keycloak/realms/`](../../infra/keycloak/realms/README.md). The public client
+`udan-extension` uses authorization code with PKCE (S256). It has no secret and no direct
 grants. Its redirect URI is `https://<extension-id>.chromiumapp.org/*`. A realm import seeds only a fresh Keycloak:
 a running Keycloak with an older realm keeps its clients until the realm is changed through the admin API or the
 volume is wiped. Development credentials come from a local `.env` file and are never committed. The one
 exception is the dev-only `backend-service` secret in the realm files; see
 [the realms README](../../infra/keycloak/realms/README.md).
+
+## Extra routes
+
+Another repository can add nginx routes without changing tracked files. It drops `*.conf` files with whole
+`server` blocks into `infra/nginx/conf.d/extra/` (ignored by git), then runs `./udan reload nginx`. Nginx loads
+that folder at every start. See [`infra/nginx/README.md`](../../infra/nginx/README.md).
 
 ## Read next
 

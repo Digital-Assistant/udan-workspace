@@ -35,10 +35,10 @@ existing=()
 for f in "${md_files[@]}"; do [[ -f "$f" ]] && existing+=("$f"); done
 md_files=("${existing[@]}")
 
-# 1. shellcheck on ./udan and scripts/*.sh.
+# 1. shellcheck on ./udan, scripts/*.sh and scripts/lib/*.sh.
 sh_files=()
 [[ -f udan ]] && sh_files+=(udan)
-for f in scripts/*.sh; do [[ -f "$f" ]] && sh_files+=("$f"); done
+for f in scripts/*.sh scripts/lib/*.sh; do [[ -f "$f" ]] && sh_files+=("$f"); done
 if (( ${#sh_files[@]} == 0 )); then
   skip shellcheck "no shell scripts"
 elif ! have shellcheck; then
@@ -144,7 +144,18 @@ else
   fail infra-scripts
 fi
 
-# 9. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
+# 9. ./udan without Docker (fake docker, temp workspace, local git repositories).
+if [[ ! -f scripts/test-udan.sh ]]; then
+  skip udan "scripts/test-udan.sh does not exist"
+elif ! have jq; then
+  skip udan "jq not installed"
+elif scripts/test-udan.sh; then
+  pass udan
+else
+  fail udan
+fi
+
+# 10. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
 if (( staged )); then
   skip gitleaks "staged mode: the hook runs gitleaks on the staged change"
 elif ! have gitleaks; then

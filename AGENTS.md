@@ -34,8 +34,9 @@ the gitignored `repos.local.yaml`. Never name an extra repository in a tracked f
 
 ## Local stack
 
-Use `./udan` to start, stop and check the local stack. *`./udan` comes in a later phase.* Until then, follow
-`AGENTS.local.md` if it exists, or the Server's `README.md`.
+Use `./udan` to start, stop and check the local stack: `./udan up infra`, `./udan down`, `./udan status`,
+`./udan doctor`. `./udan clean` deletes all local data: ask the owner first. `--dry-run` prints the commands
+without running them. See `./udan --help`.
 
 - Never create, start, stop or remove containers with raw `docker` or `docker compose` commands.
 - Read-only commands are fine: `docker ps`, `docker logs`, `docker inspect`.

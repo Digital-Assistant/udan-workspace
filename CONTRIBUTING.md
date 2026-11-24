@@ -18,12 +18,15 @@ This repository holds the workspace files only: `repos.yaml`, the docs, the shar
 `scripts/check.sh` is the one entry point. The git hooks and CI both call it. It prints PASS, SKIP or FAIL for
 each step and exits non-zero on any FAIL:
 
-- shellcheck on `./udan` and `scripts/*.sh`
+- shellcheck on `./udan`, `scripts/*.sh` and `scripts/lib/*.sh`
 - markdownlint (`.markdownlint-cli2.yaml`)
 - a render check of every Mermaid block under `docs/`
 - `likec4 validate docs/likec4`, once that folder exists
 - a link check (`lychee` if installed, else `markdown-link-check`; external URLs are not fetched)
 - `scripts/check-unknown-repos.sh`: no tracked file may name a repository that `repos.yaml` does not list
+- `scripts/check-realms.sh` and its negative tests `scripts/test-check-realms.sh` (needs `jq`)
+- `scripts/test-infra-env-certs.sh` (needs `openssl`)
+- `scripts/test-udan.sh`: `./udan` against a fake `docker` and local git repositories (needs `jq`)
 - gitleaks, if installed
 
 You need `shellcheck`, `gitleaks` and Node 22 with `npx`. The Node tools run through `npx` at pinned versions, so

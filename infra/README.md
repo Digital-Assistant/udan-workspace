@@ -31,9 +31,13 @@ PostgreSQL creates the Keycloak database and user on first start from
 
 ## Extra routes
 
-Nginx mounts `nginx/conf.d`. Put extra routes in `nginx/conf.d/extra/`; files there are ignored by git.
+Nginx mounts `nginx/conf.d`. Put extra routes in `nginx/conf.d/extra/`; files there are ignored by git. Apply a
+change with `./udan reload nginx` (it runs `nginx -t` first and reloads only a valid configuration).
 
 ## Start and stop
 
-Start with `./udan`, never raw `docker` or `docker compose` commands: the script sets up the network, volumes and
-start order.
+Use `./udan`, never raw `docker` or `docker compose` commands: it sets up the network, volumes and start order.
+`./udan up infra` starts, `./udan down` stops, `./udan doctor` checks, `./udan clean` removes everything.
+`./udan` calls `docker compose -p <folder> -f <folder>/docker-compose-<folder>.yaml --env-file infra/.env`.
+`network/docker-compose-network.yaml` documents the network; `./udan` creates it with `docker network create`
+and the same subnet, gateway and bridge options as the original setup.
