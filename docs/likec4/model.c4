@@ -1,0 +1,199 @@
+// UDAN architecture model: public parts only.
+// Validate: npx --yes likec4@1.61.1 validate docs/likec4
+// View:     npx --yes likec4@1.61.1 start docs/likec4
+
+specification {
+  tag opensource
+  tag infra
+
+  element person
+  element system
+  element container {
+    style {
+      shape component
+    }
+  }
+  element component {
+    style {
+      shape rectangle
+      opacity 15%
+    }
+  }
+  element webapp {
+    style {
+      shape browser
+    }
+  }
+  element database {
+    style {
+      shape cylinder
+    }
+  }
+  element external {
+    style {
+      color muted
+    }
+  }
+}
+
+model {
+  enduser = person 'End User' {
+    description 'Uses a web page with UDAN: records click sequences and replays them'
+  }
+
+  customerSite = external 'Web page' {
+    description 'Any web page the user visits; may load the SDK with script tags'
+  }
+
+  udan = system 'Digital Assistant (UDAN)' {
+    description 'Records and replays click sequences on web pages, with search'
+
+    client = webapp 'Client (browser extension)' {
+      #opensource
+      technology 'TypeScript, webpack, Chrome Manifest V3'
+      description 'Panel, content scripts and background worker. Embeds the SDK from npm. Signs in with PKCE'
+    }
+
+    sdk = container 'SDK' {
+      #opensource
+      technology 'TypeScript, Redux Toolkit; npm @udan/digital-assistant-sdk'
+      description 'Records and replays sequences; calls the Server with a bearer token and the UDAN-Realm header'
+    }
+
+    server = container 'Server' {
+      #opensource
+      technology 'Quarkus (Java 21), port 11081, base path /api'
+      description 'Core REST API: click-event recording, sequences, votes, status, search. Multi-tenant OIDC (UDAN-Realm header)'
+
+      resources_clickevents = component 'Clickevents resource' {
+        technology 'JAX-RS /clickevents'
+        description 'Record and fetch click nodes and sequences, delete, votes, suggested'
+      }
+      resources_search = component 'Search resources' {
+        technology 'JAX-RS /search/*, /searchTerms'
+        description 'SearchList, SearchWithID, SearchWithPermissions, SearchListWithLinks, SearchTerms'
+      }
+      resources_votes = component 'Votes resource' {
+        technology 'JAX-RS /votes'
+        description 'Add, fetch and delete upvotes and downvotes'
+      }
+      resources_sequence = component 'Sequence resource' {
+        technology 'JAX-RS /sequence'
+        description 'Update and reindex a sequence'
+      }
+      resources_status = component 'Status resource' {
+        technology 'JAX-RS /status'
+        description 'Status CRUD and toggle-active'
+      }
+      resources_users = component 'Users and Admin resources' {
+        technology 'JAX-RS /user, /users/me, /admin'
+        description 'Session key, caller identity, current user and admin check'
+      }
+      filters = component 'Request filters and exception mappers' {
+        technology 'JAX-RS providers'
+        description 'RequireRealmFilter, XssSanitizationFilter, SecurityHeadersFilter (not in dev profile), LoggingFilter, exception mappers'
+      }
+      tenant = component 'CustomTenantResolver' {
+        technology 'Quarkus OIDC'
+        description 'Reads the UDAN-Realm header; no default realm (400 without it)'
+      }
+      daos = component 'Repositories (Panache)' {
+        technology 'SequenceListDAO, SequenceVotesDAO, UserclicknodesRepository, UserAuthDataDAO, UserSessionDataDAO'
+        description 'Database access'
+      }
+      statusutil = component 'SequenceListStatus' {
+        technology 'ApplicationScoped utility'
+        description 'Resolves draft and published status ids'
+      }
+    }
+
+    gateway = container 'Nginx' {
+      #infra
+      technology 'nginx 1.24, ports 80/443'
+      description 'TLS termination and routing by host name; serves static SDK files'
+    }
+
+    keycloak = container 'Keycloak' {
+      #infra
+      technology 'Keycloak 23.0.0, ports 8080/8443'
+      description 'Identity provider. Realms UDAN, UDAN-Plugin (public PKCE client udan-extension), master'
+    }
+
+    mariadb = database 'MariaDB' {
+      #infra
+      technology 'MariaDB 10.11, port 3306'
+      description 'Server data, database udan (Flyway-managed schema)'
+    }
+    postgres = database 'Postgres' {
+      #infra
+      technology 'Postgres 14, port 5432'
+      description 'Keycloak identity store'
+    }
+    elastic = database 'Elasticsearch' {
+      #infra
+      technology 'Elasticsearch 7.17.16, port 9200'
+      description 'Search index (Hibernate Search)'
+    }
+  }
+
+  // Context
+  enduser -> customerSite 'Browses'
+  enduser -> udan.client 'Records and plays sequences'
+  customerSite -> udan.sdk 'May embed with script tags'
+
+  // Containers
+  udan.client -> udan.sdk 'Embeds (npm, exact version)'
+  udan.client -> udan.keycloak 'Signs in, PKCE, realm UDAN-Plugin' 'OIDC'
+  udan.client -> udan.server 'Session calls from the worker' 'REST/HTTPS'
+  udan.sdk -> udan.server 'Records and fetches sequences, search' 'REST/HTTPS'
+  udan.sdk -> udan.keycloak 'check-sso in a web page' 'OIDC'
+
+  udan.gateway -> udan.keycloak 'Routes to Keycloak'
+  udan.gateway -> udan.sdk 'Serves static SDK files'
+
+  udan.server -> udan.mariadb 'Reads/writes' 'JDBC'
+  udan.server -> udan.elastic 'Indexes and searches' 'HTTP'
+  udan.server -> udan.keycloak 'Validates tokens' 'OIDC'
+  udan.keycloak -> udan.postgres 'Persists'
+
+  // Server internals
+  udan.server.resources_clickevents -> udan.server.daos 'Uses'
+  udan.server.resources_clickevents -> udan.server.statusutil 'Resolves status ids'
+  udan.server.resources_clickevents -> udan.mariadb 'EntityManager queries (direct)'
+  udan.server.resources_search -> udan.server.daos 'Votes lookups'
+  udan.server.resources_search -> udan.server.statusutil 'Published status filter'
+  udan.server.resources_search -> udan.elastic 'Hibernate Search queries'
+  udan.server.resources_search -> udan.mariadb 'Loads entities'
+  udan.server.resources_votes -> udan.server.daos 'Uses'
+  udan.server.resources_sequence -> udan.server.daos 'Uses'
+  udan.server.resources_sequence -> udan.elastic 'Reindex'
+  udan.server.resources_status -> udan.mariadb 'EntityManager queries (direct)'
+  udan.server.daos -> udan.mariadb 'JDBC'
+  udan.server.statusutil -> udan.mariadb 'Status lookup'
+  udan.server.tenant -> udan.keycloak 'Selects realm for token validation'
+  udan.server.filters -> udan.server.resources_clickevents 'Wraps every request'
+}
+
+views {
+  view index {
+    title 'System Context'
+    include enduser, customerSite, udan
+  }
+
+  view containers of udan {
+    title 'Containers'
+    include *
+    include udan.*
+  }
+
+  view serverView of udan.server {
+    title 'Server dependencies'
+    include udan.server, udan.server -> *, udan.sdk, udan.client
+  }
+
+  view serverInternals of udan.server {
+    title 'Server internals'
+    include udan.server.*
+    include udan.mariadb, udan.elastic, udan.keycloak
+  }
+}

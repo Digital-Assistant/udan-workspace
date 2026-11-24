@@ -36,4 +36,5 @@ certs/
 
 # Tool output.
 node_modules/
+.likec4/
 .DS_Store

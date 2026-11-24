@@ -3,6 +3,11 @@
 Entry point for AI agents started in the workspace root. This file explains how the UDAN repositories fit
 together. Each repository has its own `AGENTS.md`: read the one for the repository you change.
 
+**Each repository is self-contained.** It has its own `AGENTS.md`, `CONTRIBUTING.md` and docs, and you can work in
+it alone. The workspace docs in [`docs/`](docs/README.md) add the cross-repository picture: overview, flows, data
+model, local infrastructure and cross-repository decisions. They never replace a repository's own rules; when the
+two differ on a repository's internals, the repository wins.
+
 **If `AGENTS.local.md` exists in the workspace root, read it too.** It holds local rules for this machine and
 for any extra repositories. Git ignores it.
 
@@ -25,7 +30,7 @@ the gitignored `repos.local.yaml`. Never name an extra repository in a tracked f
 - Server data: MariaDB (JDBC, Flyway migrations) and Elasticsearch (Hibernate Search). Keycloak data: Postgres.
 - Nginx fronts Keycloak and static assets on local hostnames. The Server runs on the host, not in Docker.
 - The Client takes the SDK from npm at a fixed version. There is no local linking.
-- Cross-repository docs (overview, flows, data model) move to `docs/` in a later phase.
+- Cross-repository docs (overview, flows, data model, local infrastructure) are in [`docs/`](docs/README.md).
 
 ## Local stack
 

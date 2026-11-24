@@ -20,7 +20,7 @@ udan-workspace/
 ├── repos.yaml                  # the public repositories, their branch and build/run commands
 ├── repos.local.example.yaml    # format for your own extra repositories (copy to repos.local.yaml)
 ├── udan                        # the workspace command (coming in a later phase)
-├── docs/                       # cross-repository docs (coming in a later phase)
+├── docs/                       # cross-repository docs
 ├── infra/                      # shared local infrastructure (coming in a later phase)
 ├── Digital-Assistant-Server/   # cloned, not tracked here
 ├── Digital_Assistant_Client/   # cloned, not tracked here
@@ -66,12 +66,16 @@ Your team may use repositories that are not public. List them in `repos.local.ya
 
 ## Docs
 
+Each repository is self-contained: it has its own `README.md`, `AGENTS.md`, `CONTRIBUTING.md` and docs, and you
+can work in it alone. The workspace docs add the cross-repository picture and never replace a repository's own
+rules. Start at [`docs/README.md`](docs/README.md).
+
 | You want to | Read |
 | --- | --- |
 | Work here as an AI agent | [`AGENTS.md`](AGENTS.md) |
 | Propose a change to the workspace | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Change one repository | That repository's `README.md`, `AGENTS.md` and `CONTRIBUTING.md` |
-| Read the architecture and cross-repository flows | `docs/` (coming in a later phase) |
+| Read the architecture and cross-repository flows | [`docs/README.md`](docs/README.md) |
 
 ## License
 
