@@ -27,6 +27,8 @@ check() { local d="$1"; shift; if "$@"; then pass "$d"; else fail "$d"; fi; }
 
 # Git must not read the user's settings (signing, hooks, default branch); every identity is set here.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Under a git hook these point at the workspace repository and would break the test repositories.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_COMMON_DIR
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
 # --- fake tools -----------------------------------------------------------------------------------------------

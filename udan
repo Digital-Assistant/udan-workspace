@@ -39,7 +39,7 @@ SERVER_URL="${UDAN_SERVER_URL:-http://localhost:11081/api}"
 WAIT_SCALE="${UDAN_WAIT_SCALE:-1}"
 MARIADB_POLLS=30
 MARIADB_POLL_SECONDS=2
-KEYCLOAK_POLLS=90
+KEYCLOAK_POLLS=150
 KEYCLOAK_POLL_SECONDS=2
 JAVA_MAJOR=21
 NODE_MAJOR=22
@@ -367,7 +367,7 @@ wait_mariadb() {
   exit 1
 }
 
-# wait_keycloak: poll the container health check until it reports healthy. Unhealthy, stopped or a timeout fails.
+# wait_keycloak: poll the container health check until it reports healthy. A stop or a timeout fails.
 wait_keycloak() {
   local i state status health
   if (( DRY_RUN )); then
@@ -383,7 +383,9 @@ wait_keycloak() {
       echo " ready."
       return 0
     fi
-    [[ "$status" == "running" && "$health" == "starting" ]] || break
+    # A first start (image update plus realm import) takes 2-3 minutes; the container check may report "unhealthy"
+    # before Keycloak is up, so keep polling while it runs and fail only on a stop or the timeout.
+    [[ "$status" == "running" && ( "$health" == "starting" || "$health" == "unhealthy" ) ]] || break
     printf '.'
     nap "$KEYCLOAK_POLL_SECONDS"
   done
@@ -856,6 +858,8 @@ doctor_containers() {
     if [[ "$status" == "running" && ( "$health" == "healthy" || "$health" == "-" ) ]]; then
       [[ "$health" == "-" ]] && health="no health check"
       doc ok "$container" "running ($health)"
+    elif [[ "$status" == "running" && "$health" == "starting" ]]; then
+      doc warn "$container" "running, health check still starting; run ./udan doctor again in a minute"
     else
       doc fail "$container" "$state"
     fi
