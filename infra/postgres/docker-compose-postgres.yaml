@@ -1,0 +1,85 @@
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: postgres-local
+    restart: unless-stopped  # More controlled restart policy than 'always'
+    hostname: postgres-local
+    env_file: ../.env   # shared infra/.env (POSTGRES_USER, POSTGRES_PASSWORD, ...)
+
+    # Security Enhancements
+    security_opt:
+      - no-new-privileges:true  # Prevents container from gaining new privileges
+    read_only: true  # Makes container filesystem read-only
+    tmpfs:
+      - /tmp:size=1G  # In-memory temporary storage
+      - /run/postgresql  # Required for PostgreSQL to work in read-only mode
+
+    # Resource Constraints
+    deploy:
+      resources:
+        limits:
+          cpus: '1'  # Limit CPU usage
+          memory: 2G  # Maximum memory allocation
+
+    # Performance Tuning
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256  # Secure authentication method
+      POSTGRES_INITDB_ARGS: --data-checksums  # Enable data checksums for data integrity
+      POSTGRES_MAX_CONNECTIONS: 100
+      POSTGRES_SHARED_BUFFERS: 2GB  # 25% of total RAM
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 6GB  # 75% of total RAM
+      POSTGRES_MAINTENANCE_WORK_MEM: 512MB
+      POSTGRES_RANDOM_PAGE_COST: 1.1  # Optimized for SSD
+      POSTGRES_WORK_MEM: 16MB
+      POSTGRES_DEFAULT_STATISTICS_TARGET: 100
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ./init
+        target: /docker-entrypoint-initdb.d
+        read_only: true  # Security enhancement
+
+    # Health Check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres@udan"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    ports:
+      - "127.0.0.1:5432:5432"  # Bind to localhost only for security
+
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "5"  # Increased for better log retention
+        max-size: "100m"
+        compress: "true"  # Enable log compression
+
+    networks:
+      uda-network: # Connects to the uda-network network
+        aliases: # Defines alternative hostnames for the container
+          - postgres-local
+          - postgresdb.local    # Container can be reached as 'postgresdb.local'
+          - postgresql.local  # Container can be reached as 'postgresql.local'
+          - postgres.db  # Container can be reached as 'postgres.db'
+
+
+    ulimits:  # System resource limits
+      nofile:
+        soft: 65536
+        hard: 65536
+      memlock:
+        soft: -1
+        hard: -1
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  uda-network:
+    external: true

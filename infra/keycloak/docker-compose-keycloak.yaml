@@ -1,0 +1,106 @@
+services:
+  keycloak-local:
+    image: quay.io/keycloak/keycloak:23.0.0
+    container_name: keycloak-local
+    hostname: keycloak-local
+    env_file: ../.env   # shared infra/.env (KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, KC_DB_USERNAME, KC_DB_PASSWORD)
+
+    # Health check ensures container availability and proper functioning
+    healthcheck:
+      test: [ "CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e \"GET /health/live HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\" || exit 1" ]
+      interval: 30s    # Runs the health check every 30 seconds
+      timeout: 10s     # Allows 10 seconds for the health check to complete before marking as failed
+      retries: 3       # Attempts the health check 3 times before considering the container unhealthy
+      start_period: 40s # Provides initial 40 seconds grace period for container to start up before beginning health checks
+
+    # Resource limits prevent DOS and ensure stable performance
+    deploy:
+      resources:
+        limits:
+          cpus: '1'      # Restricts the container to use maximum of 2 CPU cores
+          memory: 3G     # Limits container memory usage to 2 gigabytes
+
+    # Secure port mappings with SSL/TLS
+    ports:
+      - "8443:8443"  # HTTPS port
+      - "0.0.0.0:8080:8080"  # HTTP port - accessible from host and containers via gateway
+      - "127.0.0.1:9990:9990"  # Admin console restricted to localhost
+
+    # Enhanced security configurations
+    security_opt:
+      - no-new-privileges:true    # Prevents container processes from gaining additional privileges via setuid or setgid binaries
+
+    # Read-only root filesystem for security
+    read_only: false
+
+    # command options:
+    #      - start-dev                                           # Starts Keycloak in development mode
+    #      - --https-certificate-file=/opt/keycloak/certs/cert.pem    # Path to SSL/TLS certificate file
+    #      - --https-certificate-key-file=/opt/keycloak/certs/privkey.pem    # Path to SSL/TLS private key file
+    #      - --proxy=edge                                        # Sets proxy mode to edge for handling SSL termination at proxy level
+    #      - --db=postgres                                       # Specifies PostgreSQL as the database backend
+    #      - --metrics-enabled=true                              # Enables Prometheus metrics endpoint
+    #      - --health-enabled=true                               # Enables health check endpoint
+    command:
+      - start
+      - --https-certificate-file=/opt/keycloak/certs/cert.pem
+      - --https-certificate-key-file=/opt/keycloak/certs/privkey.pem
+      - --proxy=edge
+      - --db=postgres
+      - --metrics-enabled=true
+      - --health-enabled=true
+      - --import-realm
+
+
+    #    environment options:
+    #      - KC_METRICS_ENABLED=true           # Enables Prometheus metrics collection
+    #      - KC_HEALTH_ENABLED=true            # Enables health check endpoint
+    #      - KC_PROXY=edge                     # Configures proxy mode for SSL termination at edge
+    #      - KC_HTTP_ENABLED=true              # Enables HTTP listener
+    #      - KC_HOSTNAME_STRICT=false          # Disables strict hostname validation
+    #      - KC_HOSTNAME_STRICT_HTTPS=false    # Disables strict HTTPS hostname validation
+    #      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -XX:+UseG1GC    # JVM optimization settings for memory management and garbage collection
+    environment:
+      - KC_METRICS_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_PROXY=edge
+      - KC_HTTP_ENABLED=true
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
+      - KC_DB_URL=jdbc:postgresql://postgres-local:5432/keycloak
+      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -XX:+UseG1GC
+
+    networks:
+      uda-network: # Connects to the uda-network network
+        aliases: # Defines alternative hostnames for the container
+          - keycloak-local
+          - keycloak.local
+
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /opt/keycloak/certs
+        read_only: true
+      - type: bind
+        source: ./conf
+        target: /opt/keycloak/conf
+        read_only: true
+      - type: bind
+        source: ./custom-themes
+        target: /opt/keycloak/themes
+        read_only: true
+      - ./realms:/opt/keycloak/data/import/:ro
+
+    logging:
+      driver: "json-file"
+      options:
+        max-file: "5"  # Increased log files for better history
+        max-size: "100m"
+        compress: "true"
+
+    # Restart policy for high availability
+    restart: unless-stopped
+
+networks:
+  uda-network:
+    external: true

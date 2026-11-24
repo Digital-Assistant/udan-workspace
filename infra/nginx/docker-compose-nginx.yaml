@@ -1,0 +1,73 @@
+services:
+  nginx:
+    image: nginx:1.24.0
+    user: root
+    container_name: nginx-local # Custom container name for easy reference
+    hostname: nginx-local # Sets the internal hostname of the container
+    volumes:
+      # Maps host directories/files to container paths
+      - ./conf.d:/etc/nginx/conf.d # Mount all configurations (extra routes go in conf.d/extra/)
+      - ./localhost/:/etc/nginx/certs/:ro # SSL certificates directory (read-only)
+      - nginx-tmp:/tmp # Temporary files storage
+      - nginx-cache:/var/cache/nginx
+    ports:
+      # Port mappings from host to container
+      - "80:80" # HTTP port
+      - "443:443" # HTTPS port
+    logging:
+      # Container logging configuration
+      driver: "json-file" # Uses JSON file format for logs
+      options:
+        max-file: "5" # Maximum number of log files to keep
+        max-size: "50m" # Maximum size of each log file
+        compress: "true" # Enables log compression
+    networks:
+      uda-network:
+        # Connects to the custom network
+        aliases:
+          # DNS aliases for the container
+          - nginx-local
+          - nginx.local # Container accessible via nginx.local
+          - nginx # Container accessible via nginx
+    security_opt:
+      - no-new-privileges:true # Prevents privilege escalation attacks
+    cap_drop:
+      - ALL # Drops all Linux capabilities by default
+    cap_add:
+      - NET_BIND_SERVICE # Only adds capability to bind to ports below 1024
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
+    healthcheck:
+      # Container health monitoring
+      test: [ "CMD", "nginx", "-t" ] # Checks Nginx configuration
+      interval: 30s # Time between checks
+      timeout: 10s # Time to wait for response
+      retries: 3 # Number of retries before marking unhealthy
+    read_only: false
+    restart: unless-stopped # Restart policy for container
+    environment:
+      - TZ=UTC # Sets container timezone
+    ulimits:
+      # System resource limits
+      nofile:
+        soft: 65536 # Soft limit for number of open files
+        hard: 65536 # Hard limit for number of open files
+    deploy:
+      # Deployment configuration
+      resources:
+        limits:
+          cpus: '1' # Limits CPU usage to 1 core
+          memory: 4G # Limits memory usage to 1 gigabyte
+
+volumes:
+  nginx-tmp:
+    # Named volume for temporary files
+    driver: local # Uses local storage driver
+  nginx-cache:
+    driver: local
+
+networks:
+  uda-network:
+    external: true
