@@ -1,0 +1,39 @@
+# Allow-list: ignore everything in the root, then allow only the workspace files.
+# Repositories cloned into the root (public or extra) are ignored without being named.
+/*
+!/.gitignore
+!/README.md
+!/AGENTS.md
+!/CLAUDE.md
+!/LICENSE
+!/CONTRIBUTING.md
+!/repos.yaml
+!/repos.local.example.yaml
+!/udan
+!/docs/
+!/infra/
+!/scripts/
+!/.github/
+!/lefthook.yml
+!/.markdownlint*
+!/.editorconfig
+
+# Local files. These rules come after the allow-list, so they always win.
+/AGENTS.local.md
+/repos.local.yaml
+/artefacts/
+
+# Infrastructure: local settings, extra routes and certificates.
+/infra/.env
+/infra/nginx/conf.d/extra/*
+!/infra/nginx/conf.d/extra/.gitkeep
+certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# Tool output.
+node_modules/
+.DS_Store

@@ -1,0 +1,14 @@
+# Example for repos.local.yaml: extra repositories for your machine or team.
+#
+# Copy this file to repos.local.yaml and edit it. Git ignores repos.local.yaml, so the names, URLs and
+# commands in it never reach the public workspace. The format is the same as repos.yaml.
+
+repos:
+  - name: example
+    path: example-private-repo
+    url: https://example.com/your-org/example-private-repo.git
+    branch: dev
+    visibility: private
+    build: ./build.sh
+    run: ./run.sh
+    # ref: v0.1.0
