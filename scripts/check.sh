@@ -3,7 +3,8 @@
 # Usage: scripts/check.sh [--staged]
 #   --staged   lint and link-check only the staged Markdown files (used by the pre-commit hook)
 # Each step prints PASS, SKIP or FAIL. The exit code is non-zero when any step fails.
-# Needs: bash, git, shellcheck, jq, node 22+ with npx. Optional: gitleaks, lychee. Tool versions are pinned below.
+# Needs: bash, git, shellcheck, node 22+ with npx. Optional: jq (realm check), openssl (infra scripts), gitleaks,
+# lychee. Tool versions are pinned below.
 set -uo pipefail
 
 MARKDOWNLINT_VERSION="0.24.0"
@@ -126,7 +127,7 @@ if [[ ! -d infra/keycloak/realms ]]; then
   skip realms "infra/keycloak/realms does not exist"
 elif ! have jq; then
   skip realms "jq not installed"
-elif scripts/check-realms.sh; then
+elif scripts/check-realms.sh && scripts/test-check-realms.sh; then
   pass realms
 else
   fail realms
