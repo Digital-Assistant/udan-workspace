@@ -15,9 +15,27 @@ This repository holds the workspace files only: `repos.yaml`, the docs, the shar
 
 ## Local checks
 
-The checks run through `lefthook` and in CI: shell lint, Markdown lint, a secret scan and a check that no
-tracked file names a repository missing from `repos.yaml`. *They come in the next phase.* Until then, run
-`gitleaks detect --source . --no-banner` before you push.
+`scripts/check.sh` is the one entry point. The git hooks and CI both call it. It prints PASS, SKIP or FAIL for
+each step and exits non-zero on any FAIL:
+
+- shellcheck on `./udan` and `scripts/*.sh`
+- markdownlint (`.markdownlint-cli2.yaml`)
+- a render check of every Mermaid block under `docs/`
+- `likec4 validate docs/likec4`, once that folder exists
+- a link check (`lychee` if installed, else `markdown-link-check`; external URLs are not fetched)
+- `scripts/check-unknown-repos.sh`: no tracked file may name a repository that `repos.yaml` does not list
+- gitleaks, if installed
+
+You need `shellcheck`, `gitleaks` and Node 22 with `npx`. The Node tools run through `npx` at pinned versions, so
+nothing else is installed. Install the hooks once per clone:
+
+```bash
+npx --yes lefthook@2.2.2 install
+```
+
+The pre-commit hook refuses a commit on `dev` or `main`, runs `scripts/check.sh --staged` and scans the staged
+change with gitleaks. The commit-msg hook refuses a subject that is not a Conventional Commit. Do not bypass
+the hooks with `--no-verify`: CI runs the same checks.
 
 ## Rules for this public repository
 

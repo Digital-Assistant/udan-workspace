@@ -1,0 +1,16 @@
+# Markdown lint rules. Run through scripts/check.sh (pinned markdownlint-cli2).
+# Line length is 120. Tables and code blocks are exempt from the length rule.
+config:
+  default: true
+  MD013:
+    line_length: 120
+    code_blocks: false
+    tables: false
+  MD060: false
+  MD024:
+    siblings_only: true
+  MD033: false
+gitignore: true
+ignores:
+  # Import stub for Claude Code: it holds only @-imports, no heading.
+  - CLAUDE.md

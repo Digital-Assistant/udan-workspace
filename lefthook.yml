@@ -1,0 +1,25 @@
+# Local git hooks (lefthook). One-time setup per clone: `npx --yes lefthook@2.2.2 install`.
+# Install gitleaks and shellcheck first (see CONTRIBUTING.md "Local checks").
+# The hooks are a fast safety net. CI runs the same scripts/check.sh and is the gate: do not bypass a hook with
+# --no-verify; fix the cause.
+pre-commit:
+  parallel: false
+  commands:
+    protected-branch:
+      # dev and main change only through pull requests. Refuse the commit here, before the push is refused.
+      run: >-
+        branch="$(git branch --show-current)";
+        case "$branch" in dev|main|master)
+        echo "Do not commit on '$branch'. Run: git switch -c <type>/<topic>, then commit again." >&2; exit 1;;
+        esac
+    checks:
+      # Same script as CI, scoped to the staged Markdown files.
+      run: scripts/check.sh --staged
+    secrets:
+      run: gitleaks git --pre-commit --staged --redact --no-banner
+
+# The subject must be a Conventional Commit, the rule the pull-request title check applies.
+commit-msg:
+  commands:
+    commit-subject:
+      run: scripts/check-commit-subject.sh {1}
