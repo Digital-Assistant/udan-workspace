@@ -34,7 +34,9 @@ example="$infra/.env.example"
 env_file="$infra/.env"
 [[ -f "$example" ]] || { echo "infra-env: $example not found" >&2; exit 2; }
 
-names() { sed -n -E 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$1"; }
+# shellcheck source=scripts/lib/dotenv.sh
+source "$ROOT/scripts/lib/dotenv.sh"
+names() { dotenv_keys "$1"; }
 
 if (( check )); then
   [[ -f "$env_file" ]] || { echo "infra-env: $env_file does not exist" >&2; exit 1; }

@@ -70,12 +70,19 @@ generate_cert() {
     return 0
   fi
   echo "Generating certificate for ${cn} in ${dir} (${reason})..."
-  openssl req -x509 -out "$dir/${prefix}.crt" -keyout "$dir/${prefix}.key" \
+  # openssl prints progress dots on stderr: keep its output and show it only when it fails.
+  local out
+  if ! out=$(openssl req -x509 -out "$dir/${prefix}.crt" -keyout "$dir/${prefix}.key" \
     -newkey rsa:2048 -nodes -sha256 -days "$CERT_VALID_DAYS" \
     -subj "/CN=${cn}" -extensions EXT -config <(
       printf '[dn]\nCN=%s\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=%s\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' \
         "$cn" "$sans"
-    ) 2>/dev/null
+    ) 2>&1); then
+    echo "infra-certs: openssl could not write the certificate to ${dir}:" >&2
+    printf '%s\n' "$out" | grep -vE '^[.+*]*$' >&2 || true
+    echo "infra-certs: check that ${dir} exists and that you own it (a folder that Docker created belongs to root)." >&2
+    return 1
+  fi
   # .pem aliases (Keycloak and MariaDB read these names).
   cp "$dir/${prefix}.crt" "$dir/cert.pem"
   cp "$dir/${prefix}.key" "$dir/privkey.pem"

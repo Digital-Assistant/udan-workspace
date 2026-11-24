@@ -27,6 +27,7 @@ services:
       options:
         max-file: "2"
         max-size: "100m"
+    restart: unless-stopped
 networks:
   uda-network:
     external: true

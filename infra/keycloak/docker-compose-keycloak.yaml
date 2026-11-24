@@ -3,7 +3,6 @@ services:
     image: quay.io/keycloak/keycloak:23.0.0
     container_name: keycloak-local
     hostname: keycloak-local
-    env_file: ../.env   # shared infra/.env (KEYCLOAK_ADMIN, KEYCLOAK_ADMIN_PASSWORD, KC_DB_USERNAME, KC_DB_PASSWORD)
 
     # Health check ensures container availability and proper functioning
     healthcheck:
@@ -60,7 +59,12 @@ services:
     #      - KC_HOSTNAME_STRICT=false          # Disables strict hostname validation
     #      - KC_HOSTNAME_STRICT_HTTPS=false    # Disables strict HTTPS hostname validation
     #      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m -XX:+UseG1GC    # JVM optimization settings for memory management and garbage collection
+    # Only the variables this service needs; the values come from infra/.env (--env-file).
     environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+      - KC_DB_USERNAME=${KC_DB_USERNAME}
+      - KC_DB_PASSWORD=${KC_DB_PASSWORD}
       - KC_METRICS_ENABLED=true
       - KC_HEALTH_ENABLED=true
       - KC_PROXY=edge

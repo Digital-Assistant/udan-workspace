@@ -2,33 +2,49 @@
 # udan: workspace command. Clones and builds the repositories in repos.yaml (plus repos.local.yaml) and starts,
 # stops and checks the shared local infrastructure in infra/. Run ./udan --help for the command list.
 # Works from any directory: the workspace is the folder that holds this file (symlinks are resolved).
+# Needs Linux (or WSL2), bash 4.4+ and GNU coreutils. Test hooks: UDAN_WAIT_SCALE (0 skips every fixed wait and
+# poll pause; default 1) and UDAN_KEYCLOAK_URL, UDAN_ES_URL, UDAN_SERVER_URL (doctor endpoints).
+
+# Plain POSIX test, so that an old bash reaches the message instead of a syntax error further down.
+if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ] \
+  || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 4 ]; }; then
+  echo "udan needs bash 4.4 or later; this is bash ${BASH_VERSION:-unknown}. On macOS, install a newer bash." >&2
+  exit 1
+fi
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd -P)"
 INFRA="$ROOT/infra"
 ENV_FILE="$INFRA/.env"
 NETWORK="uda-network"
-# Start order and waits (seconds after "compose up"), as in the original local setup.
-# Format: display name|infra folder (also the compose project name)|container|wait
+# The stack, in start order, with the waits (seconds after "compose up") of the original local setup.
+# Format: display name|infra folder (also the compose project name)|container|wait|named volumes
+# The container and volume names match the compose files (scripts/test-udan.sh checks this). They are the same
+# names as the original setup, so existing volumes are reused. Never change them.
 SERVICES=(
-  "MariaDB|mariadb|mariadb-local|10"
-  "Postgres|postgres|postgres-local|5"
-  "Keycloak|keycloak|keycloak-local|15"
-  "Elasticsearch|elasticsearch|elasticsearch-local|10"
-  "Nginx|nginx|nginx-local|2"
+  "MariaDB|mariadb|mariadb-local|10|mariadb_mariadb_data"
+  "Postgres|postgres|postgres-local|5|postgres_postgres_data"
+  "Keycloak|keycloak|keycloak-local|15|"
+  "Elasticsearch|elasticsearch|elasticsearch-local|10|elasticsearch_elasticsearch_data"
+  "Nginx|nginx|nginx-local|2|nginx_nginx-tmp nginx_nginx-cache"
 )
 # Host port|container that publishes it.
 PORTS=("80|nginx-local" "443|nginx-local" "3306|mariadb-local" "5432|postgres-local" "8080|keycloak-local"
   "8443|keycloak-local" "9200|elasticsearch-local")
 REALMS=(UDAN UDAN-Plugin)
-# Endpoints doctor checks. The UDAN_*_URL variables override them (the test points them at a closed port).
+# Endpoints doctor checks. The UDAN_*_URL variables override them (the test points them at a fake).
 KEYCLOAK_URL="${UDAN_KEYCLOAK_URL:-http://127.0.0.1:8080}"
 ES_URL="${UDAN_ES_URL:-http://127.0.0.1:9200}"
 SERVER_URL="${UDAN_SERVER_URL:-http://localhost:11081/api}"
+WAIT_SCALE="${UDAN_WAIT_SCALE:-1}"
 MARIADB_POLLS=30
 MARIADB_POLL_SECONDS=2
+KEYCLOAK_POLLS=90
+KEYCLOAK_POLL_SECONDS=2
 JAVA_MAJOR=21
 NODE_MAJOR=22
+# Tools every infrastructure command needs. Build tools (java, node, npm) come from each repository's "needs".
+CORE_TOOLS=(git docker compose openssl jq curl)
 
 DRY_RUN=0
 YES=0
@@ -37,6 +53,8 @@ NO_BUILD=0
 
 # shellcheck source=scripts/lib/manifest.sh
 source "$ROOT/scripts/lib/manifest.sh"
+# shellcheck source=scripts/lib/dotenv.sh
+source "$ROOT/scripts/lib/dotenv.sh"
 
 usage() {
   cat <<'EOF'
@@ -44,31 +62,36 @@ Usage: udan [--dry-run] [--yes] <command> [arguments]
 
 Commands:
   bootstrap [name] [--no-build]
-                 Check the tools, then clone or update every repository in repos.yaml and repos.local.yaml
-                 and run its build command. With a name, only that repository. An existing checkout is
-                 fast-forwarded only when it is clean and on its branch; otherwise it is left as it is.
+                 Clone or update every repository in repos.yaml and repos.local.yaml, then run its build
+                 command. With a name, only that repository. An existing checkout is fast-forwarded only when
+                 it is clean and on its branch; otherwise it is left as it is, with a warning. A repository
+                 whose build tools (its "needs") are missing is not built and counts as a failure.
   up infra       Create infra/.env and the dev certificate if missing, create the network, then start
                  MariaDB, Postgres, Keycloak, Elasticsearch and Nginx in that order. Running containers
-                 are left as they are. Nginx also loads infra/nginx/conf.d/extra/*.conf.
+                 are left as they are. Fails when MariaDB or Keycloak does not become ready.
+                 Nginx also loads infra/nginx/conf.d/extra/*.conf.
   up all         up infra, then print the run command of each repository. It does not start them: they are
                  long-running dev servers, so run each one in its own terminal.
-  down           Stop the containers in reverse order. Data stays.
-  clean          Ask, run down, then remove the containers, their named volumes and the network. Deletes all
-                 local data. infra/.env and the certificates stay. --yes skips the question.
+  down           Stop the stack's containers in reverse order. Data stays.
+  clean          Check that no other container uses the stack's network or volumes, ask, stop the stack,
+                 then remove its containers, the network and its named volumes. Deletes all local data.
+                 infra/.env and the certificates stay. --yes skips the question.
   status         Show each container's state and health, and each repository's branch and changes.
   doctor [--json]
                  Check tools, Docker, infra/.env, certificates, containers, ports, database and Keycloak
                  logins with the infra/.env values, realms, Elasticsearch and the Server (warning only).
-                 Exits 1 when a required check fails.
+                 Missing build tools are warnings. Exits 1 when a required check fails.
   reload nginx   Test the nginx configuration in the running container, then reload it. Use it after you
                  add or change a file in infra/nginx/conf.d/extra/.
   help           Show this text.
 
 Flags:
   --dry-run      Print every command that would change something (docker, git, builds, file creation)
-                 instead of running it. Read-only queries still run. status and doctor ignore it.
-  --yes          Answer yes to the clean question.
+                 instead of running it. Read-only checks still run, so a dry run stops where a real run
+                 would. status and doctor ignore it.
+  -y, --yes      Answer yes to the clean question.
   -h, --help     Show this text.
+  --             End of flags.
 
 Exit codes: 0 ok, 1 a step or check failed, 2 wrong usage.
 EOF
@@ -97,27 +120,33 @@ run() {
   fi
 }
 
-# pause <seconds>: wait after a start (printed in dry-run mode).
+# pause <seconds>: the fixed wait after a start (printed in dry-run mode).
 pause() {
   if (( DRY_RUN )); then echo "DRY-RUN: wait ${1}s"; return; fi
-  printf '      waiting %ss' "$1"
-  local i
-  for ((i = 0; i < $1; i++)); do sleep 1; printf '.'; done
+  local s=$(($1 * WAIT_SCALE)) i
+  printf '      waiting %ss' "$s"
+  for ((i = 0; i < s; i++)); do sleep 1; printf '.'; done
   echo
 }
+# nap <seconds>: the pause between two polls.
+nap() { (( WAIT_SCALE == 0 )) || sleep "$(($1 * WAIT_SCALE))"; }
 
 # --- helpers ------------------------------------------------------------------------------------------------
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# env_get NAME: value of NAME in infra/.env (the last one wins; quotes and CR stripped). The file is not sourced.
-env_get() {
-  local v
-  [[ -f "$ENV_FILE" ]] || return 0
-  v="$(sed -n -E "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1)"
-  v="${v%$'\r'}"
-  case "$v" in \"*\" | \'*\') v="${v:1:${#v}-2}" ;; esac
-  printf '%s' "$v"
+# env_get NAME: value of NAME in infra/.env, read like Docker Compose (scripts/lib/dotenv.sh). Empty when unset.
+env_get() { dotenv_get "$ENV_FILE" "$1" || true; }
+
+# env_unsupported: the variables of .env.example whose infra/.env value is outside the supported format.
+env_unsupported() {
+  local name rc out=""
+  while IFS= read -r name; do
+    rc=0
+    dotenv_get "$ENV_FILE" "$name" >/dev/null || rc=$?
+    (( rc != 3 )) || out+="$name "
+  done < <(dotenv_keys "$INFRA/.env.example" | sort -u)
+  printf '%s' "${out% }"
 }
 
 compose_file() { printf '%s' "$INFRA/$1/docker-compose-$1.yaml"; }
@@ -130,14 +159,32 @@ compose() {
   run docker compose -p "$folder" -f "$(compose_file "$folder")" --env-file "$ENV_FILE" "$@"
 }
 
+# service_fields <entry>: sets name folder container wait vols (the caller declares them local).
+service_fields() { IFS='|' read -r name folder container wait vols <<<"$1"; }
+stack_containers() { local s name folder container wait vols; for s in "${SERVICES[@]}"; do service_fields "$s"; echo "$container"; done; }
+stack_volumes() { local s name folder container wait vols v; for s in "${SERVICES[@]}"; do service_fields "$s"; for v in $vols; do echo "$v"; done; done; }
+is_stack_container() { stack_containers | grep -qxF -- "$1"; }
+
 docker_ok() { have docker && docker info >/dev/null 2>&1; }
-container_running() { [[ -n "$(docker ps -q -f "name=^/$1\$" 2>/dev/null)" ]]; }
+# container_running NAME: running (a restarting or paused container does not count).
+container_running() { [[ -n "$(docker ps -q -f "name=^/$1\$" -f status=running 2>/dev/null)" ]]; }
+# container_status NAME: created, running, restarting, paused, exited, dead, or absent.
+container_status() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || echo "absent"; }
+# container_active NAME: in a state that "docker stop" ends.
+container_active() { case "$(container_status "$1")" in running | restarting | paused) return 0 ;; *) return 1 ;; esac; }
 # container_state NAME: "<status> <health>" (health is "-" when the container has no health check), or "absent".
 container_state() {
   docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$1" \
     2>/dev/null || echo "absent"
 }
 network_exists() { docker network inspect "$NETWORK" >/dev/null 2>&1; }
+volume_exists() { docker volume inspect "$1" >/dev/null 2>&1; }
+
+# show_logs NAME: the last log lines of a container (read only), indented, on stderr.
+show_logs() {
+  echo "      last log lines of $1 (docker logs --tail 20 $1):" >&2
+  docker logs --tail 20 "$1" 2>&1 | sed 's/^/        /' >&2 || true
+}
 
 java_major() {
   local bin="java" line
@@ -151,13 +198,13 @@ java_major() {
 }
 node_major() { have node || return 1; local v; v="$(node --version 2>/dev/null)"; v="${v#v}"; printf '%s' "${v%%.*}"; }
 
-# missing_tools <tool...>: prints one line per missing or too old tool. Known names: git docker compose openssl
-# jq curl java node npm.
+# missing_tools <tool...>: prints one line per missing or too old tool. Special names: compose (the docker
+# plugin), java (JAVA_MAJOR+ via JAVA_HOME or PATH), node (NODE_MAJOR+). Any other name must be on PATH.
 missing_tools() {
   local t v
   for t in "$@"; do
     case "$t" in
-      compose) have docker && docker compose version >/dev/null 2>&1 || echo "docker compose plugin" ;;
+      compose) have docker && docker compose version >/dev/null 2>&1 || echo "docker compose plugin (v2)" ;;
       java)
         v="$(java_major || true)"
         if [[ -z "$v" ]]; then echo "java $JAVA_MAJOR (set JAVA_HOME or put java on PATH)"
@@ -174,7 +221,7 @@ missing_tools() {
 }
 
 require_tools() {
-  local missing
+  local missing line
   missing="$(missing_tools "$@")"
   if [[ -n "$missing" ]]; then
     err "missing tools:"
@@ -190,25 +237,15 @@ require_docker() {
   warn_context
 }
 
-warn_context() {
+docker_context() {
   local ctx="${DOCKER_CONTEXT:-}"
   [[ -n "$ctx" ]] || ctx="$(docker context show 2>/dev/null || echo default)"
+  printf '%s' "$ctx"
+}
+warn_context() {
+  local ctx
+  ctx="$(docker_context)"
   [[ "$ctx" == "default" ]] || warn "Docker context is '$ctx', not 'default'. The stack expects the local daemon."
-}
-
-require_env_file() {
-  [[ ! -f "$ENV_FILE" ]] || return 0
-  if (( DRY_RUN )); then warn "infra/.env does not exist; the real run would stop here."; return 0; fi
-  die "infra/.env does not exist. Run ./udan up infra once, or scripts/infra-env.sh."
-}
-
-stack_running() {
-  local s name folder container wait out=""
-  for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name folder container wait <<<"$s"
-    container_running "$container" && out+="$container "
-  done
-  printf '%s' "${out% }"
 }
 
 # --- up -----------------------------------------------------------------------------------------------------
@@ -218,12 +255,18 @@ prepare_env_and_certs() {
   if [[ -f "$ENV_FILE" ]]; then
     ok "infra/.env exists"
   else
-    run "$ROOT/scripts/infra-env.sh"
+    run "$ROOT/scripts/infra-env.sh" || die "could not create infra/.env (see the error above)."
   fi
   if [[ -f "$ENV_FILE" ]]; then
     "$ROOT/scripts/infra-env.sh" --check || die "infra/.env lacks the variables above. Copy them from infra/.env.example."
+    local bad
+    bad="$(env_unsupported)"
+    [[ -z "$bad" ]] || die "infra/.env: the value of $bad uses \$, \\ or an open quote, which ./udan cannot read" \
+      "the way Docker Compose does. Put the value in single quotes. See infra/README.md, \".env format\"."
   fi
-  run "$ROOT/scripts/infra-certs.sh"
+  run "$ROOT/scripts/infra-certs.sh" \
+    || die "could not create the dev certificate in infra/nginx/localhost (see the error above; a folder" \
+      "that Docker created belongs to root: remove it with sudo, then run ./udan up infra again)."
 }
 
 create_network() {
@@ -238,46 +281,39 @@ create_network() {
   fi
 }
 
+# start_service <name> <folder> <container> <wait>: sets STARTED=1 when it started the container.
+STARTED=0
 start_service() {
   local name="$1" folder="$2" container="$3" wait="$4"
+  STARTED=0
   step "$name"
   [[ -f "$(compose_file "$folder")" ]] || die "compose file not found: $(compose_file "$folder")"
   if container_running "$container"; then
     ok "$container is already running"
     return 0
   fi
-  compose "$folder" up -d --remove-orphans || die "$name did not start. See: docker logs $container"
+  compose "$folder" up -d || die "$name did not start. See: docker logs $container"
+  STARTED=1
   (( DRY_RUN )) || ok "$container started"
   pause "$wait"
 }
 
-# The same readiness test as the original setup: the application user runs SELECT 1, 30 tries 2 s apart.
-wait_mariadb() {
-  local user="udan" db="udan" i
-  if (( DRY_RUN )); then
-    echo "DRY-RUN: poll docker exec mariadb-local mariadb -u $user $db -e 'SELECT 1'" \
-      "(${MARIADB_POLLS} tries, ${MARIADB_POLL_SECONDS}s apart; password UDAN_DB_PASSWORD from infra/.env)"
-    return 0
-  fi
-  printf '      waiting for MariaDB'
-  for ((i = 1; i <= MARIADB_POLLS; i++)); do
-    if mariadb_login "$user" "$(env_get UDAN_DB_PASSWORD)" "$db"; then echo " ready."; return 0; fi
-    printf '.'
-    sleep "$MARIADB_POLL_SECONDS"
-  done
-  echo
-  warn "MariaDB did not accept user '$user' with UDAN_DB_PASSWORD from infra/.env."
-  volume_hint >&2
-  return 0
-}
-
 # The password goes through the environment (docker exec -e NAME), never on a command line.
+# *_login <user> <password> <database>: 0 accepted, 1 refused (wrong password or no such user), 2 other error
+# (not ready yet, container down, client missing).
 mariadb_login() {
-  MYSQL_PWD="$2" docker exec -e MYSQL_PWD mariadb-local mariadb -u "$1" "$3" -e "SELECT 1" >/dev/null 2>&1
+  local out
+  out="$(MYSQL_PWD="$2" docker exec -e MYSQL_PWD mariadb-local mariadb -u "$1" "$3" -e "SELECT 1" 2>&1 >/dev/null)" \
+    && return 0
+  [[ "$out" == *"Access denied"* ]] && return 1
+  return 2
 }
 postgres_login() {
-  PGPASSWORD="$2" docker exec -e PGPASSWORD postgres-local \
-    psql -h 127.0.0.1 -U "$1" -d "$3" -tAc "SELECT 1" >/dev/null 2>&1
+  local out
+  out="$(PGPASSWORD="$2" docker exec -e PGPASSWORD postgres-local \
+    psql -h 127.0.0.1 -U "$1" -d "$3" -tAc "SELECT 1" 2>&1 >/dev/null)" && return 0
+  [[ "$out" == *"password authentication failed"* || "$out" == *"role \""*"\" does not exist"* ]] && return 1
+  return 2
 }
 
 volume_hint() {
@@ -288,16 +324,87 @@ volume_hint() {
 EOF
 }
 
+mariadb_refused() {
+  echo
+  err "MariaDB refused user 'udan' with UDAN_DB_PASSWORD from infra/.env."
+  volume_hint >&2
+  exit 1
+}
+
+# wait_mariadb <was started>: the readiness test of the original setup (user udan runs SELECT 1, 30 tries 2 s
+# apart). A MariaDB that was already running gets one try. A refused login or a timeout fails.
+wait_mariadb() {
+  local user="udan" db="udan" i rc last=2 pw
+  if (( DRY_RUN )); then
+    echo "DRY-RUN: poll docker exec mariadb-local mariadb -u $user $db -e 'SELECT 1'" \
+      "(${MARIADB_POLLS} tries, ${MARIADB_POLL_SECONDS}s apart; password UDAN_DB_PASSWORD from infra/.env)"
+    return 0
+  fi
+  pw="$(env_get UDAN_DB_PASSWORD)"
+  if (( ! $1 )); then
+    rc=0
+    mariadb_login "$user" "$pw" "$db" || rc=$?
+    case "$rc" in
+      0) ok "MariaDB accepts user '$user'"; return 0 ;;
+      1) mariadb_refused ;;
+    esac
+  fi
+  printf '      waiting for MariaDB'
+  for ((i = 1; i <= MARIADB_POLLS; i++)); do
+    rc=0
+    mariadb_login "$user" "$pw" "$db" || rc=$?
+    if (( rc == 0 )); then echo " ready."; return 0; fi
+    # A new volume refuses the user for a moment while the init script creates it, so keep polling.
+    last=$rc
+    printf '.'
+    nap "$MARIADB_POLL_SECONDS"
+  done
+  (( last != 1 )) || mariadb_refused
+  echo
+  err "MariaDB did not accept connections after $((MARIADB_POLLS * MARIADB_POLL_SECONDS)) seconds."
+  show_logs mariadb-local
+  exit 1
+}
+
+# wait_keycloak: poll the container health check until it reports healthy. Unhealthy, stopped or a timeout fails.
+wait_keycloak() {
+  local i state status health
+  if (( DRY_RUN )); then
+    echo "DRY-RUN: poll docker inspect keycloak-local until its health check reports healthy" \
+      "(${KEYCLOAK_POLLS} tries, ${KEYCLOAK_POLL_SECONDS}s apart)"
+    return 0
+  fi
+  printf '      waiting for Keycloak'
+  for ((i = 1; i <= KEYCLOAK_POLLS; i++)); do
+    state="$(container_state keycloak-local)"
+    read -r status health <<<"$state"
+    if [[ "$status" == "running" && ( "$health" == "healthy" || "$health" == "-" ) ]]; then
+      echo " ready."
+      return 0
+    fi
+    [[ "$status" == "running" && "$health" == "starting" ]] || break
+    printf '.'
+    nap "$KEYCLOAK_POLL_SECONDS"
+  done
+  echo
+  err "Keycloak is not ready (state: $state)."
+  show_logs keycloak-local
+  exit 1
+}
+
 up_infra() {
   require_tools openssl
   require_docker
   prepare_env_and_certs
   create_network
-  local s name folder container wait
+  local s name folder container wait vols
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name folder container wait <<<"$s"
+    service_fields "$s"
     start_service "$name" "$folder" "$container" "$wait"
-    [[ "$folder" == "mariadb" ]] && wait_mariadb
+    case "$folder" in
+      mariadb) wait_mariadb "$STARTED" ;;
+      keycloak) wait_keycloak ;;
+    esac
   done
   local extra=("$INFRA"/nginx/conf.d/extra/*.conf)
   [[ -e "${extra[0]}" ]] || extra=()
@@ -307,15 +414,16 @@ up_infra() {
 }
 
 up_all() {
-  up_infra
+  # Read the manifest first: a broken repos.local.yaml stops here, before anything starts.
   manifest_load "$ROOT" || exit 1
+  up_infra
   step "Next: start the repositories you need, each in its own terminal"
   local n path cmd
   for n in "${MANIFEST_NAMES[@]}"; do
     cmd="$(manifest_get "$n" run)"
     [[ -n "$cmd" ]] || continue
     path="$(manifest_path "$n")"
-    if [[ -d "$path" ]]; then info "$n: (cd $(printf '%q' "$path") && $cmd)"
+    if [[ -d "$path" ]]; then info "$n: (cd $(printf '%q' "$path") && export UDAN_WORKSPACE=$(printf '%q' "$ROOT") && $cmd)"
     else info "$n: not cloned yet, run ./udan bootstrap $n first"; fi
   done
 }
@@ -331,62 +439,118 @@ cmd_up() {
 
 # --- down and clean -----------------------------------------------------------------------------------------
 
-cmd_down() {
-  require_docker
-  local i s name folder container wait
+# stop_stack: stop the stack's containers by name, in reverse order. Nothing else is touched.
+stop_stack() {
+  local i name folder container wait vols
   for ((i = ${#SERVICES[@]} - 1; i >= 0; i--)); do
-    IFS='|' read -r name folder container wait <<<"${SERVICES[i]}"
+    service_fields "${SERVICES[i]}"
     step "Stop $name"
-    if container_running "$container"; then
-      require_env_file
-      compose "$folder" stop || die "could not stop $name"
-      (( DRY_RUN )) || ok "$container stopped"
-    else
+    if ! container_active "$container"; then
       ok "$container is not running"
+    elif (( DRY_RUN )); then
+      run docker stop "$container"
+    else
+      docker stop "$container" >/dev/null || die "could not stop $container"
+      ok "$container stopped"
     fi
   done
 }
 
+cmd_down() {
+  require_docker
+  stop_stack
+}
+
+# clean_blockers: prints one line per container outside the stack that runs on the network or uses a stack
+# volume. Fails when Docker cannot be asked.
+clean_blockers() {
+  local c st v out
+  out="$(docker ps --filter "network=$NETWORK" --format '{{.Names}}')" || return 1
+  while IFS= read -r c; do
+    [[ -z "$c" ]] || is_stack_container "$c" || echo "$c (running, attached to $NETWORK)"
+  done <<<"$out"
+  while IFS= read -r v; do
+    out="$(docker ps -a --filter "volume=$v" --format '{{.Names}}'$'\t''{{.State}}')" || return 1
+    while IFS=$'\t' read -r c st; do
+      [[ -z "$c" ]] || is_stack_container "$c" || echo "$c ($st, uses volume $v)"
+    done <<<"$out"
+  done < <(stack_volumes)
+}
+
 confirm_clean() {
+  local vols
+  vols="$(stack_volumes | paste -sd ' ')"
   cat <<EOF
 This deletes all local data of the stack:
-  - the containers mariadb-local, postgres-local, keycloak-local, elasticsearch-local, nginx-local
-  - their named volumes (databases, search index, nginx cache)
+  - the containers $(stack_containers | paste -sd ' ' | sed 's/ /, /g')
   - the network $NETWORK
+  - the volumes ${vols// /, }
+Any other local setup that uses these container, network or volume names loses them too.
 infra/.env and the certificates stay.
 EOF
   (( YES )) && return 0
-  [[ -t 0 ]] || die "clean needs a confirmation. Run it in a terminal, or pass --yes."
+  [[ -t 0 ]] || die "clean needs a confirmation. Run it in a terminal, or pass --yes. Nothing was changed."
   local answer
   read -r -p 'Type "yes" to continue: ' answer
   [[ "$answer" == "yes" ]] || die "aborted, nothing changed."
 }
 
+CLEAN_DONE=()
+# clean_step <description> <command...>: runs one removal; on failure it says what was done and stops.
+clean_step() {
+  local what="$1"
+  shift
+  if run "$@"; then
+    CLEAN_DONE+=("$what")
+    (( DRY_RUN )) || ok "$what"
+    return 0
+  fi
+  err "clean stopped: could not $what (see the error above)."
+  if (( ${#CLEAN_DONE[@]} )); then
+    printf '      already done: %s\n' "${CLEAN_DONE[@]}" >&2
+  else
+    echo "      nothing was removed." >&2
+  fi
+  echo "      Fix the cause, then run ./udan clean again; it skips what is already gone." >&2
+  exit 1
+}
+
 cmd_clean() {
   require_docker
-  require_env_file
+  step "Check that nothing outside the stack uses its network or volumes"
+  local blockers b
+  blockers="$(clean_blockers)" || die "could not list the containers. Nothing was changed."
+  if [[ -n "$blockers" ]]; then
+    err "clean stopped before changing anything. These containers are not part of the stack, but use its" \
+      "network or volumes:"
+    while IFS= read -r b; do echo "      - $b" >&2; done <<<"$blockers"
+    echo "      Stop them first (and remove a stopped one that uses a stack volume), then run ./udan clean again." >&2
+    exit 1
+  fi
+  ok "no other container uses $NETWORK or the stack volumes"
   confirm_clean
-  cmd_down
+  stop_stack
   if (( DRY_RUN )); then
     echo "DRY-RUN: refuse here if a container of the stack still runs"
   else
-    local still
-    still="$(stack_running)"
-    [[ -z "$still" ]] || die "still running after down: $still. Nothing was removed."
+    local c still=""
+    while IFS= read -r c; do container_active "$c" && still+="$c "; done < <(stack_containers)
+    [[ -z "$still" ]] || die "still running after down: ${still% }. Nothing was removed."
   fi
-  local i s name folder container wait
-  for ((i = ${#SERVICES[@]} - 1; i >= 0; i--)); do
-    IFS='|' read -r name folder container wait <<<"${SERVICES[i]}"
-    step "Remove $name and its volumes"
-    compose "$folder" down -v --remove-orphans || die "could not remove $name"
-  done
+  local c v
+  step "Remove the containers"
+  while IFS= read -r c; do
+    if [[ "$(container_status "$c")" == "absent" ]]; then ok "container $c does not exist"
+    else clean_step "remove container $c" docker rm "$c"; fi
+  done < <(stack_containers | tac)
   step "Remove network $NETWORK"
-  if network_exists || (( DRY_RUN )); then
-    run docker network rm "$NETWORK" || die "could not remove $NETWORK (is another container on it?)"
-    (( DRY_RUN )) || ok "network $NETWORK removed"
-  else
-    ok "network $NETWORK does not exist"
-  fi
+  if network_exists; then clean_step "remove network $NETWORK" docker network rm "$NETWORK"
+  else ok "network $NETWORK does not exist"; fi
+  step "Remove the volumes"
+  while IFS= read -r v; do
+    if volume_exists "$v"; then clean_step "remove volume $v" docker volume rm "$v"
+    else ok "volume $v does not exist"; fi
+  done < <(stack_volumes | tac)
   if (( DRY_RUN )); then step "Dry run done; nothing was changed."
   else step "Clean done. Start again with: ./udan up infra"; fi
 }
@@ -400,7 +564,7 @@ cmd_reload() {
     *) usage_error "unknown reload target: $1 (use nginx)" ;;
   esac
   require_docker
-  container_running nginx-local || (( DRY_RUN )) || die "nginx-local is not running. Start it with ./udan up infra."
+  container_running nginx-local || die "nginx-local is not running. Start it with ./udan up infra."
   step "Test the nginx configuration"
   run docker exec nginx-local nginx -t || die "the nginx configuration has errors; nothing was reloaded."
   step "Reload nginx"
@@ -413,17 +577,65 @@ cmd_reload() {
 BOOT_FAILS=0
 boot_fail() { err "$1"; BOOT_FAILS=$((BOOT_FAILS + 1)); }
 
-git_dirty() { [[ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]]; }
+# is_checkout PATH: PATH is the top folder of its own git work tree (not just a folder inside another one,
+# such as the workspace).
+is_checkout() {
+  local top
+  [[ -d "$1" ]] || return 1
+  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ "$top" == "$(cd "$1" && pwd -P)" ]]
+}
+# is_workspace PATH: PATH is the workspace root itself.
+is_workspace() { [[ -d "$1" && "$(cd "$1" && pwd -P)" == "$ROOT" ]]; }
+# inside_workspace PATH: PATH, with symlinks resolved, lies under the workspace root (not the root itself).
+inside_workspace() { local r; r="$(readlink -m -- "$1")"; [[ "$r" == "$ROOT"/?* ]]; }
+dir_empty() { [[ -d "$1" && -z "$(ls -A -- "$1")" ]]; }
+# git_dirty PATH: tracked files changed. Untracked files do not count: a pull or checkout that would overwrite
+# one is refused by git itself.
+git_dirty() { [[ -n "$(git -C "$1" status --porcelain --untracked-files=no 2>/dev/null)" ]]; }
+# head_reachable PATH: the commit at HEAD is on some branch or tag, so leaving it loses nothing.
+head_reachable() {
+  [[ -n "$(git -C "$1" for-each-ref --count=1 --contains HEAD --format=x refs/heads refs/remotes refs/tags 2>/dev/null)" ]]
+}
+
+checkout_ref() {
+  local n="$1" path="$2" ref="$3"
+  run git -C "$path" -c advice.detachedHead=false checkout -q --detach "$ref" -- \
+    || { boot_fail "$n: cannot check out ref $ref"; return 1; }
+  (( DRY_RUN )) || ok "$n: at ref $ref (detached HEAD)"
+}
+
+clone_repo() {
+  local n="$1" path="$2" url="$3" branch="$4" ref="$5"
+  [[ ! -d "$path" ]] || info "$n: $path is empty; cloning into it"
+  run git clone --branch "$branch" -- "$url" "$path" || { boot_fail "$n: clone failed"; return 1; }
+  [[ -z "$ref" ]] || checkout_ref "$n" "$path" "$ref"
+}
 
 update_checkout() {
-  local n="$1" path="$2" url="$3" branch="$4" current origin
+  local n="$1" path="$2" url="$3" branch="$4" ref="$5" current origin
   origin="$(git -C "$path" remote get-url origin 2>/dev/null || true)"
   [[ -z "$origin" || "$origin" == "$url" ]] || warn "$n: origin is $origin, the manifest says $url (left as is)"
   if git_dirty "$path"; then
-    warn "$n: uncommitted changes, not updated"
+    warn "$n: uncommitted changes, not updated${ref:+ (ref $ref not checked out)}"
     return 0
   fi
   current="$(git -C "$path" branch --show-current)"
+  if [[ -n "$ref" ]]; then
+    # The ref is checked out only from the manifest branch or a detached HEAD that is safe to leave.
+    if [[ -n "$current" && "$current" != "$branch" ]]; then
+      warn "$n: on '$current', not '$branch'; not switching to ref $ref"
+      return 0
+    fi
+    if [[ -z "$current" ]] && ! head_reachable "$path"; then
+      warn "$n: the detached HEAD has commits that are on no branch or tag; not switching to ref $ref"
+      return 0
+    fi
+    run git -C "$path" fetch --tags origin || warn "$n: fetch failed; trying the refs already here"
+    [[ -z "$current" ]] || info "$n: leaving branch '$current' for ref $ref (detached HEAD; the branch is kept)"
+    checkout_ref "$n" "$path" "$ref" || true
+    return 0
+  fi
   if [[ "$current" != "$branch" ]]; then
     warn "$n: on '${current:-detached HEAD}', not '$branch'; not updated"
     return 0
@@ -431,40 +643,18 @@ update_checkout() {
   run git -C "$path" pull --ff-only origin "$branch" || warn "$n: cannot fast-forward '$branch'; left as is"
 }
 
-checkout_ref() {
-  local n="$1" path="$2" ref="$3"
-  if (( ! DRY_RUN )) && git_dirty "$path"; then
-    warn "$n: uncommitted changes, ref $ref not checked out"
-    return 0
-  fi
-  run git -C "$path" fetch --tags origin || warn "$n: fetch failed"
-  run git -C "$path" -c advice.detachedHead=false checkout "$ref" || boot_fail "$n: cannot check out $ref"
-}
-
-bootstrap_repo() {
-  local n="$1" path url branch ref build
-  path="$(manifest_path "$n")"
-  url="$(manifest_url "$n")"
-  branch="$(manifest_get "$n" branch)"
-  ref="$(manifest_get "$n" ref)"
+build_repo() {
+  local n="$1" path="$2" build needs missing
   build="$(manifest_get "$n" build)"
-  step "$n ($path)"
-  if manifest_in_place "$n"; then
-    [[ -d "$path" ]] || { boot_fail "$n: in_place is set but $path does not exist"; return 0; }
-    ok "$n: existing checkout used in place (no clone, pull or branch switch)"
-  elif [[ ! -e "$path" ]]; then
-    run git clone --branch "$branch" "$url" "$path" || { boot_fail "$n: clone failed"; return 0; }
-    [[ -z "$ref" ]] || checkout_ref "$n" "$path" "$ref"
-  elif ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
-    boot_fail "$n: $path exists but is not a git checkout"
-    return 0
-  elif [[ -n "$ref" ]]; then
-    checkout_ref "$n" "$path" "$ref"
-  else
-    update_checkout "$n" "$path" "$url" "$branch"
-  fi
   if (( NO_BUILD )) || [[ -z "$build" ]]; then
     info "$n: build skipped"
+    return 0
+  fi
+  needs="$(manifest_get "$n" needs)"
+  # shellcheck disable=SC2086  # needs is a space-separated word list
+  missing="$(missing_tools $needs)"
+  if [[ -n "$missing" ]]; then
+    boot_fail "$n: not built; missing $(paste -sd ',' <<<"$missing" | sed 's/,/, /g')"
     return 0
   fi
   if (( DRY_RUN )); then
@@ -476,17 +666,46 @@ bootstrap_repo() {
   fi
 }
 
+bootstrap_repo() {
+  local n="$1" path url branch ref
+  path="$(manifest_path "$n")"
+  url="$(manifest_url "$n")"
+  branch="$(manifest_get "$n" branch)"
+  ref="$(manifest_get "$n" ref)"
+  step "$n ($path)"
+  if is_workspace "$path"; then
+    boot_fail "$n: $path is the workspace itself; give the repository its own folder"
+    return 0
+  fi
+  if manifest_in_place "$n"; then
+    is_checkout "$path" || { boot_fail "$n: in_place is set but $path is not the top folder of a git checkout"; return 0; }
+    ok "$n: existing checkout used in place (no clone, pull or branch switch)"
+  else
+    inside_workspace "$path" \
+      || { boot_fail "$n: $path resolves outside the workspace; use in_place: true for a checkout elsewhere"; return 0; }
+    if [[ ! -e "$path" ]] || dir_empty "$path"; then
+      clone_repo "$n" "$path" "$url" "$branch" "$ref" || return 0
+    elif ! is_checkout "$path"; then
+      boot_fail "$n: $path exists but is not a git checkout; move it away or empty it"
+      return 0
+    else
+      update_checkout "$n" "$path" "$url" "$branch" "$ref"
+    fi
+  fi
+  build_repo "$n" "$path"
+}
+
 cmd_bootstrap() {
   (( $# <= 1 )) || usage_error "bootstrap takes at most one repository name"
-  step "Tools"
-  require_tools git docker compose openssl jq curl java node npm
-  ok "git, docker, compose, openssl, jq, curl, java $JAVA_MAJOR+, node $NODE_MAJOR+, npm"
   manifest_load "$ROOT" || exit 1
   local names=("${MANIFEST_NAMES[@]}")
   if (( $# == 1 )); then
     manifest_has "$1" || usage_error "unknown repository: $1 (known: ${MANIFEST_NAMES[*]})"
     names=("$1")
   fi
+  step "Tools"
+  require_tools git
+  ok "git (build tools are checked per repository)"
   local n
   for n in "${names[@]}"; do bootstrap_repo "$n"; done
   (( BOOT_FAILS == 0 )) || die "bootstrap: $BOOT_FAILS problem(s), see above."
@@ -498,9 +717,9 @@ cmd_bootstrap() {
 cmd_status() {
   step "Containers"
   if docker_ok; then
-    local s name folder container wait
+    local s name folder container wait vols
     for s in "${SERVICES[@]}"; do
-      IFS='|' read -r name folder container wait <<<"$s"
+      service_fields "$s"
       printf '      %-22s %s\n' "$container" "$(container_state "$container")"
     done
     if network_exists; then info "network $NETWORK: present"; else info "network $NETWORK: absent"; fi
@@ -514,14 +733,21 @@ cmd_status() {
     path="$(manifest_path "$n")"
     mode=""
     manifest_in_place "$n" && mode=" (in place)"
-    if [[ ! -d "$path" ]]; then
+    if [[ ! -e "$path" ]]; then
       printf '      %-12s %s\n' "$n" "not cloned$mode"
+      continue
+    elif is_workspace "$path"; then
+      printf '      %-12s %s\n' "$n" "path is the workspace itself$mode"
+      continue
+    elif ! is_checkout "$path"; then
+      printf '      %-12s %s\n' "$n" "$path is not a git checkout$mode"
       continue
     fi
     branch="$(git -C "$path" branch --show-current 2>/dev/null || true)"
     [[ -n "$branch" ]] || branch="detached at $(git -C "$path" rev-parse --short HEAD 2>/dev/null || echo '?')"
     dirty="clean"
-    git_dirty "$path" && dirty="changes"
+    if git_dirty "$path"; then dirty="changes"
+    elif [[ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then dirty="untracked files"; fi
     printf '      %-12s %-24s %s%s\n' "$n" "$branch" "$dirty" "$mode"
   done
 }
@@ -532,6 +758,7 @@ DOC_RESULTS=()
 DOC_FAILS=0
 DOC_VOLUME_HINT=0
 DOC_REALM_HINT=0
+DOC_ENV_OK=1
 # doc <ok|warn|fail> <check> <detail>
 doc() {
   DOC_RESULTS+=("$1"$'\t'"$2"$'\t'"$3")
@@ -556,18 +783,47 @@ port_in_use() {
 
 doctor_tools() {
   local missing
-  missing="$(missing_tools git docker compose openssl jq curl java node npm)"
-  if [[ -z "$missing" ]]; then doc ok tools "git, docker, compose, openssl, jq, curl, java $JAVA_MAJOR+, node $NODE_MAJOR+, npm"
+  missing="$(missing_tools "${CORE_TOOLS[@]}")"
+  if [[ -z "$missing" ]]; then doc ok tools "${CORE_TOOLS[*]}"
   else doc fail tools "missing: $(paste -sd ',' <<<"$missing" | sed 's/,/, /g')"; fi
+  # Build tools: only the bootstrap of a repository that lists them in "needs" uses them, so a gap is a warning.
+  if ! manifest_load "$ROOT" 2>/dev/null; then
+    doc fail manifest "repos.yaml or repos.local.yaml has errors; ./udan status shows them"
+    return 0
+  fi
+  local n t m tools=() line=""
+  declare -A users=()
+  for n in "${MANIFEST_NAMES[@]}"; do
+    for t in $(manifest_get "$n" needs); do
+      [[ -n "${users[$t]+set}" ]] || tools+=("$t")
+      users[$t]="${users[$t]:+${users[$t]}, }$n"
+    done
+  done
+  for t in "${tools[@]}"; do
+    m="$(missing_tools "$t")"
+    [[ -z "$m" ]] || line+="${line:+; }$m (to build ${users[$t]})"
+  done
+  if (( ${#tools[@]} == 0 )); then doc ok "build tools" "none listed in the manifest"
+  elif [[ -z "$line" ]]; then doc ok "build tools" "${tools[*]}"
+  else doc warn "build tools" "missing: $line; ./udan bootstrap cannot build those"; fi
 }
 
 doctor_files() {
   if [[ ! -f "$ENV_FILE" ]]; then
     doc fail "infra/.env" "missing; ./udan up infra creates it"
-  elif "$ROOT/scripts/infra-env.sh" --check >/dev/null 2>&1; then
-    doc ok "infra/.env" "present, every variable of .env.example set"
-  else
+    DOC_ENV_OK=0
+  elif ! "$ROOT/scripts/infra-env.sh" --check >/dev/null 2>&1; then
     doc fail "infra/.env" "incomplete; run scripts/infra-env.sh --check"
+    DOC_ENV_OK=0
+  else
+    local bad
+    bad="$(env_unsupported)"
+    if [[ -n "$bad" ]]; then
+      doc fail "infra/.env" "value of $bad uses \$, \\ or an open quote; put it in single quotes (infra/README.md)"
+      DOC_ENV_OK=0
+    else
+      doc ok "infra/.env" "present, every variable of .env.example set"
+    fi
   fi
   local crt
   for crt in nginx/localhost/localhost.crt keycloak/certs/cert.pem; do
@@ -582,8 +838,8 @@ doctor_docker() {
   if ! have docker; then doc fail docker "not installed"; return 1; fi
   if ! docker info >/dev/null 2>&1; then doc fail "docker daemon" "not running or not reachable"; return 1; fi
   doc ok "docker daemon" "running"
-  local ctx="${DOCKER_CONTEXT:-}"
-  [[ -n "$ctx" ]] || ctx="$(docker context show 2>/dev/null || echo default)"
+  local ctx
+  ctx="$(docker_context)"
   if [[ "$ctx" == "default" ]]; then doc ok "docker context" "default"
   else doc warn "docker context" "'$ctx', expected 'default'"; fi
   if network_exists; then doc ok "network $NETWORK" "present"; else doc fail "network $NETWORK" "absent"; fi
@@ -591,9 +847,9 @@ doctor_docker() {
 }
 
 doctor_containers() {
-  local s name folder container wait state status health
+  local s name folder container wait vols state status health
   for s in "${SERVICES[@]}"; do
-    IFS='|' read -r name folder container wait <<<"$s"
+    service_fields "$s"
     state="$(container_state "$container")"
     read -r status health <<<"$state"
     if [[ "$status" == "running" && ( "$health" == "healthy" || "$health" == "-" ) ]]; then
@@ -619,32 +875,42 @@ doctor_ports() {
   done
 }
 
+# doctor_login <check> <function> <user> <password variable> <database> <container> <what refused means>
+doctor_login() {
+  local check="$1" fn="$2" user="$3" var="$4" db="$5" container="$6" rc=0
+  "$fn" "$user" "$(env_get "$var")" "$db" || rc=$?
+  case "$rc" in
+    0) doc ok "$check" "$var accepted" ;;
+    1) doc fail "$check" "$7 from infra/.env refused"; DOC_VOLUME_HINT=1 ;;
+    *) doc fail "$check" "could not check (not ready, or no client in the container); see docker logs $container" ;;
+  esac
+}
+
 doctor_databases() {
-  [[ -f "$ENV_FILE" ]] || { doc fail "database logins" "skipped: infra/.env missing"; return 0; }
+  if (( ! DOC_ENV_OK )); then doc fail "database logins" "skipped: infra/.env is missing or not readable"; return 0; fi
   if container_running mariadb-local; then
-    if mariadb_login udan "$(env_get UDAN_DB_PASSWORD)" udan; then doc ok "MariaDB login udan" "UDAN_DB_PASSWORD accepted"
-    else doc fail "MariaDB login udan" "UDAN_DB_PASSWORD from infra/.env refused"; DOC_VOLUME_HINT=1; fi
-    if mariadb_login root "$(env_get MYSQL_ROOT_PASSWORD)" mysql; then doc ok "MariaDB login root" "MYSQL_ROOT_PASSWORD accepted"
-    else doc fail "MariaDB login root" "MYSQL_ROOT_PASSWORD from infra/.env refused"; DOC_VOLUME_HINT=1; fi
+    doctor_login "MariaDB login udan" mariadb_login udan UDAN_DB_PASSWORD udan mariadb-local "UDAN_DB_PASSWORD"
+    doctor_login "MariaDB login root" mariadb_login root MYSQL_ROOT_PASSWORD mysql mariadb-local "MYSQL_ROOT_PASSWORD"
   fi
   if container_running postgres-local; then
     local pu ku
     pu="$(env_get POSTGRES_USER)"
     ku="$(env_get KC_DB_USERNAME)"
-    if postgres_login "$pu" "$(env_get POSTGRES_PASSWORD)" postgres; then doc ok "Postgres login $pu" "POSTGRES_PASSWORD accepted"
-    else doc fail "Postgres login $pu" "POSTGRES_USER/POSTGRES_PASSWORD from infra/.env refused"; DOC_VOLUME_HINT=1; fi
-    if postgres_login "$ku" "$(env_get KC_DB_PASSWORD)" keycloak; then doc ok "Postgres login $ku" "KC_DB_PASSWORD accepted"
-    else doc fail "Postgres login $ku" "KC_DB_USERNAME/KC_DB_PASSWORD from infra/.env refused"; DOC_VOLUME_HINT=1; fi
+    doctor_login "Postgres login $pu" postgres_login "$pu" POSTGRES_PASSWORD postgres postgres-local \
+      "POSTGRES_USER/POSTGRES_PASSWORD"
+    doctor_login "Postgres login $ku" postgres_login "$ku" KC_DB_PASSWORD keycloak postgres-local \
+      "KC_DB_USERNAME/KC_DB_PASSWORD"
   fi
 }
 
-# kc_token <realm> <body>: POST the form body (read from stdin, so no secret is on a command line). Prints the
-# HTTP status, then the response on the next line.
+# kc_token <realm>: POST the form body read from stdin (so no secret is on a command line). Prints the response,
+# then the HTTP status on the last line.
 kc_token() {
   curl -s -m 10 -w '\n%{http_code}' -H 'Content-Type: application/x-www-form-urlencoded' --data-binary @- \
     "$KEYCLOAK_URL/realms/$1/protocol/openid-connect/token" 2>/dev/null || true
 }
-urlenc() { jq -rn --arg v "$1" '$v|@uri'; }
+# urlenc <value>: percent-encoded. The value reaches jq on stdin, not on its command line.
+urlenc() { printf '%s' "$1" | jq -sRr @uri; }
 
 doctor_keycloak() {
   local code realm resp
@@ -654,25 +920,32 @@ doctor_keycloak() {
   for realm in "${REALMS[@]}"; do
     code="$(http_code "$KEYCLOAK_URL/realms/$realm/.well-known/openid-configuration")"
     if [[ "$code" == "200" ]]; then doc ok "realm $realm" "discovery 200"
-    else doc fail "realm $realm" "discovery answered $code"; DOC_REALM_HINT=1; fi
+    elif [[ "$code" == "404" ]]; then doc fail "realm $realm" "not found (404)"; DOC_REALM_HINT=1
+    else doc fail "realm $realm" "discovery answered $code"; fi
   done
   have jq || { doc fail "Keycloak logins" "jq missing"; return 0; }
-  [[ -f "$ENV_FILE" ]] || { doc fail "Keycloak logins" "skipped: infra/.env missing"; return 0; }
+  (( DOC_ENV_OK )) || { doc fail "Keycloak logins" "skipped: infra/.env is missing or not readable"; return 0; }
   resp="$(printf 'grant_type=client_credentials&client_id=backend-service&client_secret=%s' \
     "$(urlenc "$(env_get KC_BACKEND_SERVICE_SECRET)")" | kc_token UDAN)"
+  code="${resp##*$'\n'}"
   if jq -e '.access_token' >/dev/null 2>&1 <<<"${resp%$'\n'*}"; then
     doc ok "token backend-service UDAN" "client-credentials token issued"
-  else
-    doc fail "token backend-service UDAN" "refused (HTTP ${resp##*$'\n'}); KC_BACKEND_SERVICE_SECRET does not match the realm"
+  elif [[ "$code" == 400 || "$code" == 401 || "$code" == 404 ]]; then
+    doc fail "token backend-service UDAN" "refused (HTTP $code); KC_BACKEND_SERVICE_SECRET does not match the realm"
     DOC_REALM_HINT=1
+  else
+    doc fail "token backend-service UDAN" "could not check (HTTP $code)"
   fi
   resp="$(printf 'grant_type=password&client_id=admin-cli&username=%s&password=%s' \
     "$(urlenc "$(env_get KEYCLOAK_ADMIN)")" "$(urlenc "$(env_get KEYCLOAK_ADMIN_PASSWORD)")" | kc_token master)"
+  code="${resp##*$'\n'}"
   if jq -e '.access_token' >/dev/null 2>&1 <<<"${resp%$'\n'*}"; then
     doc ok "Keycloak admin login" "KEYCLOAK_ADMIN accepted in master"
-  else
-    doc fail "Keycloak admin login" "KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD refused (HTTP ${resp##*$'\n'})"
+  elif [[ "$code" == 401 ]]; then
+    doc fail "Keycloak admin login" "KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD refused (HTTP 401)"
     DOC_VOLUME_HINT=1
+  else
+    doc fail "Keycloak admin login" "could not check (HTTP $code)"
   fi
 }
 
@@ -711,7 +984,7 @@ cmd_doctor() {
   fi
   local hints=()
   if (( DOC_VOLUME_HINT )); then
-    hints+=("A login with the infra/.env values failed. The data volumes keep the passwords they were created with. Fix: put the values those volumes were created with into infra/.env, or run ./udan clean (deletes all local data) and then ./udan up infra.")
+    hints+=("A login with the infra/.env values was refused. The data volumes keep the passwords they were created with. Fix: put the values those volumes were created with into infra/.env, or run ./udan clean (deletes all local data) and then ./udan up infra.")
   fi
   if (( DOC_REALM_HINT )); then
     hints+=("Keycloak imports the realm files only into a fresh database. An older Keycloak volume keeps its own realms and secrets. Fix: put that volume's backend-service secret into infra/.env, or run ./udan clean and then ./udan up infra.")
@@ -734,9 +1007,11 @@ cmd_doctor() {
 # --- main ---------------------------------------------------------------------------------------------------
 
 main() {
-  local args=() a
+  local args=() a flags=1
   for a in "$@"; do
+    if (( ! flags )); then args+=("$a"); continue; fi
     case "$a" in
+      --) flags=0 ;;
       --dry-run) DRY_RUN=1 ;;
       --yes | -y) YES=1 ;;
       --json) JSON=1 ;;
@@ -746,10 +1021,12 @@ main() {
       *) args+=("$a") ;;
     esac
   done
+  [[ "$WAIT_SCALE" =~ ^[0-9]+$ ]] || usage_error "UDAN_WAIT_SCALE must be a whole number, not '$WAIT_SCALE'"
   (( ${#args[@]} > 0 )) || { usage >&2; exit 2; }
   local cmd="${args[0]}"
   args=("${args[@]:1}")
   (( JSON == 0 )) || [[ "$cmd" == "doctor" ]] || usage_error "--json works with doctor only"
+  (( JSON == 0 )) || have jq || die "doctor --json needs jq; install it, or run ./udan doctor without --json."
   (( NO_BUILD == 0 )) || [[ "$cmd" == "bootstrap" ]] || usage_error "--no-build works with bootstrap only"
   case "$cmd" in
     bootstrap) cmd_bootstrap "${args[@]}" ;;

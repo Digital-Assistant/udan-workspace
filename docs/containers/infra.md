@@ -23,12 +23,12 @@ first: see the Server [`README.md`, "Getting Started"][server-start].
 
 | Command | What it does |
 |---|---|
-| `./udan up infra` | Creates `infra/.env` and the certificate if missing, creates the network, then starts the services below in order. Running containers are left as they are |
-| `./udan down` | Stops the containers in reverse order. Data stays in the volumes |
+| `./udan up infra` | Creates `infra/.env` and the certificate if missing, creates the network, then starts the services below in order. Running containers are left as they are. Exits 1 when MariaDB or Keycloak does not become ready |
+| `./udan down` | Stops the stack's containers by name, in reverse order. Data stays in the volumes |
 | `./udan status` | State and health of each container |
 | `./udan doctor` | Checks tools, Docker, `infra/.env`, certificates, containers, ports, database and Keycloak logins, realms, Elasticsearch and the Server. Exits 1 on a failed check |
 | `./udan reload nginx` | Runs `nginx -t` in the container, then reloads nginx |
-| `./udan clean` | Asks, stops the stack, then removes the containers, their named volumes and the network. `infra/.env` and the certificates stay |
+| `./udan clean` | Checks that no other container uses the network or the volumes, asks, stops the stack, then removes its five containers, the network and its named volumes, by name. `infra/.env` and the certificates stay |
 
 Add `--dry-run` to print the Docker commands instead of running them.
 
@@ -60,16 +60,20 @@ flowchart LR
 ```
 
 After each start `./udan` waits a fixed time: MariaDB 10 s, Postgres 5 s, Keycloak 15 s, Elasticsearch 10 s,
-Nginx 2 s. After MariaDB it also waits until the user `udan` can run `SELECT 1` (30 tries, 2 s apart). Stop runs in
-the reverse order. Always start and stop the stack with `./udan`, never with raw `docker` commands
+Nginx 2 s. After MariaDB it also waits until the user `udan` can run `SELECT 1` (30 tries, 2 s apart), and after
+Keycloak until its health check reports healthy (90 tries, 2 s apart). If either does not become ready,
+`./udan up infra` stops with exit code 1 and shows the container's last log lines. Stop runs in the reverse
+order. Always start and stop the stack with `./udan`, never with raw `docker` commands
 ([`AGENTS.md`](../../AGENTS.md), "Local stack").
 
 ## Settings and passwords
 
 `infra/.env` holds every password the stack uses. `./udan up infra` creates it from `infra/.env.example`, whose
-values are dev-only placeholders. The databases and Keycloak read these values only when their volume is new. A
-volume created earlier keeps its own passwords. When `./udan doctor` reports a refused login, either put the
-values the volume was created with into `infra/.env`, or run `./udan clean` and start again.
+values are dev-only placeholders. Each service gets only the variables it needs. `./udan` reads the file the way
+Docker Compose does for a documented subset of the format: see [`infra/README.md`](../../infra/README.md#env-format).
+The databases and Keycloak read these values only when their volume is new. A volume created earlier keeps its
+own passwords. When `./udan doctor` reports a refused login (not one it could not check), either put the values
+the volume was created with into `infra/.env`, or run `./udan clean` and start again.
 
 ## Certificates
 

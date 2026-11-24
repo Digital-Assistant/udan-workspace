@@ -5,7 +5,6 @@ services:
     container_name: postgres-local
     restart: unless-stopped  # More controlled restart policy than 'always'
     hostname: postgres-local
-    env_file: ../.env   # shared infra/.env (POSTGRES_USER, POSTGRES_PASSWORD, ...)
 
     # Security Enhancements
     security_opt:
@@ -23,7 +22,13 @@ services:
           memory: 2G  # Maximum memory allocation
 
     # Performance Tuning
+    # Only the variables this service needs; the values come from infra/.env (--env-file).
+    # KC_DB_USERNAME and KC_DB_PASSWORD are for init/01-create-keycloak-db.sh.
     environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_DB_USERNAME: ${KC_DB_USERNAME}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
       POSTGRES_HOST_AUTH_METHOD: scram-sha-256  # Secure authentication method
       POSTGRES_INITDB_ARGS: --data-checksums  # Enable data checksums for data integrity
       POSTGRES_MAX_CONNECTIONS: 100

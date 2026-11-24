@@ -26,7 +26,8 @@ each step and exits non-zero on any FAIL:
 - `scripts/check-unknown-repos.sh`: no tracked file may name a repository that `repos.yaml` does not list
 - `scripts/check-realms.sh` and its negative tests `scripts/test-check-realms.sh` (needs `jq`)
 - `scripts/test-infra-env-certs.sh` (needs `openssl`)
-- `scripts/test-udan.sh`: `./udan` against a fake `docker` and local git repositories (needs `jq`)
+- `scripts/test-udan.sh`: `./udan` against a fake `docker` and local git repositories (needs `jq` and
+  `openssl`)
 - gitleaks, if installed
 
 You need `shellcheck`, `gitleaks` and Node 22 with `npx`. The Node tools run through `npx` at pinned versions, so
@@ -42,6 +43,9 @@ the hooks with `--no-verify`: CI runs the same checks.
 
 ## Rules for this public repository
 
+- Treat `repos.yaml` as code. `./udan bootstrap` runs its `build` lines as shell commands on every
+  contributor's machine, and `./udan up all` prints its `run` lines to paste into a shell. Review a change to
+  `build` or `run` like a change to a script.
 - Never add a file that names a repository missing from `repos.yaml`. List extra repositories in your own
   gitignored `repos.local.yaml`.
 - Never commit credentials, hostnames of deployed systems or personal data.

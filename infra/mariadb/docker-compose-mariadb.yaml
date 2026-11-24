@@ -40,7 +40,9 @@ services:
         hard: 40000
 
     healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "udan", "--password=${UDAN_DB_PASSWORD}" ]
+      # $$ keeps Compose from expanding the variable: the container's shell reads it from its own environment,
+      # so the password is not written into the health check config (docker inspect).
+      test: [ "CMD-SHELL", "MYSQL_PWD=\"$$UDAN_DB_PASSWORD\" mysqladmin ping -h localhost -u udan" ]
       interval: 30s
       timeout: 10s
       retries: 3

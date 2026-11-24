@@ -9,7 +9,11 @@
 #   build       command run in <path> to install dependencies and build
 #   run         command run in <path> to start it for local development
 #   ref         optional: a tag or commit to check out instead of the branch head, for a pinned setup
+#   needs       tools the build needs (java = JDK 21+, node = Node 22+, any other name = a command on PATH);
+#               ./udan bootstrap does not build a repository whose tools are missing
 #
+# This file is code: ./udan bootstrap runs each build command as a shell command on the contributor's machine.
+# Review a change to build or run like a change to a script.
 # Extra repositories go in the gitignored repos.local.yaml (see repos.local.example.yaml).
 # The Client takes the SDK from npm at a fixed version; there is no local linking between them.
 
@@ -22,6 +26,7 @@ repos:
     # Needs JDK 21 on JAVA_HOME. Resolves the locked dependencies and compiles; needs no running services.
     # Source: README.md "Setup (non-interactive)".
     build: ./gradlew assemble
+    needs: java
     # Runs pre-flight-check.sh (needs the local infrastructure up), then ./gradlew quarkusDev on port 11081.
     # Source: README.md "Start the Server", start-server.sh.
     run: ./start-server.sh
@@ -36,6 +41,7 @@ repos:
     # gitignored); a missing file builds with empty values. Output: build/.
     # Source: AGENTS.md "npm ci (or npm install), then ... npm run build", package.json scripts.
     build: npm ci && npm run build
+    needs: node npm
     # webpack in watch mode; reload the extension on chrome://extensions after each rebuild.
     # Source: README.md "Developers: build and load your own copy", package.json "start".
     run: npm start
@@ -48,5 +54,6 @@ repos:
     # Needs Node 22. Settings come from environments/local.env (copy of environments/local.env.example).
     # Output: dist/. Source: README.md "Development", package.json scripts.
     build: npm ci && npm run build
+    needs: node npm
     # Watch build (--env build=local --mode=development). Source: AGENTS.md, package.json "start".
     run: npm start

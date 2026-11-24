@@ -149,6 +149,8 @@ if [[ ! -f scripts/test-udan.sh ]]; then
   skip udan "scripts/test-udan.sh does not exist"
 elif ! have jq; then
   skip udan "jq not installed"
+elif ! have openssl; then
+  skip udan "openssl not installed"
 elif scripts/test-udan.sh; then
   pass udan
 else

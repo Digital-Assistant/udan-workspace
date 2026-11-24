@@ -1,38 +1,49 @@
 # Example for repos.local.yaml: your own repositories and local overrides for this machine.
 #
-# Copy this file to repos.local.yaml and edit it. Git ignores repos.local.yaml, so the names, URLs, paths and
+# Copy this file to repos.local.yaml, then remove the "#" in front of the lines you want. Everything below is
+# commented out, so a plain copy changes nothing. Git ignores repos.local.yaml, so the names, URLs, paths and
 # commands in it never reach the public workspace. The format is the same as repos.yaml: a flat subset of YAML
-# ("key: value" lines; " #" starts a comment; quote a value that must keep a " #").
+# ("key: value" lines; " #" starts a comment; quote a value that must keep a " #"). Windows line ends are fine.
+#
+# Trust: this file is code. ./udan bootstrap runs every `build` command in it as a shell command, and the
+# run commands that ./udan up all prints are meant to be pasted into a shell. Only use a repos.local.yaml that
+# you wrote or reviewed yourself.
 #
 # ./udan reads repos.yaml first, then this file:
 #   - an entry with a new name adds a repository;
 #   - an entry with the name of a repos.yaml entry overrides only the fields it sets (url, path, branch, build,
-#     run, ref, in_place). The other fields keep their repos.yaml values.
+#     run, ref, needs, in_place). The other fields keep their repos.yaml values.
 #
 # One field exists only here:
 #   in_place    true: use the existing checkout at `path` as it is. ./udan bootstrap never clones, pulls or
 #               switches its branch; it only runs `build`. Use it for a checkout you work in elsewhere.
 #
-# A relative `path`, or a `url` that is a relative local path, is relative to the workspace root. `~` is your
-# home folder. A `url` may be any URL git can clone, including a local folder or bare repository.
+# Without in_place: true, `path` must be a folder inside the workspace (no absolute path, no "~", no "." or
+# ".." part). With in_place: true, `path` may be anywhere; "~" is your home folder. A relative `path`, or a `url`
+# that is a relative local path, is relative to the workspace root. A `url` may be any URL git can clone,
+# including a local folder or bare repository.
+#
+# `ref` (a tag or commit) is checked out right after a clone, or later when the checkout is clean and on its
+# `branch` (or on a detached HEAD that is on a branch or tag). On another branch, ./udan warns and leaves it.
 
-repos:
-  # Add a repository. It is cloned into the workspace root like the public ones.
-  - name: example
-    path: example-repo
-    url: https://example.com/your-org/example-repo.git
-    branch: dev
-    visibility: private
-    build: ./build.sh
-    run: ./run.sh
-    # ref: v0.1.0
-
-  # Override a listed repository: clone it from a local mirror and use another branch.
-  # - name: server
-  #   url: /srv/git/server-mirror.git
-  #   branch: feature/my-change
-
-  # Use an existing checkout outside the workspace in place: no clone, no pull, no branch switch.
-  # - name: client
-  #   path: ~/code/my-client-checkout
-  #   in_place: true
+# repos:
+#   # Add a repository. It is cloned into the workspace root like the public ones.
+#   - name: example
+#     path: example-repo
+#     url: https://example.com/your-org/example-repo.git
+#     branch: dev
+#     visibility: private
+#     build: ./build.sh
+#     run: ./run.sh
+#     needs: node npm
+#     # ref: v0.1.0
+#
+#   # Override a listed repository: clone it from a local mirror and use another branch.
+#   - name: server
+#     url: /srv/git/server-mirror.git
+#     branch: feature/my-change
+#
+#   # Use an existing checkout outside the workspace in place: no clone, no pull, no branch switch.
+#   - name: client
+#     path: ~/code/my-client-checkout
+#     in_place: true
