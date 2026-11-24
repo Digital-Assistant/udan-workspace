@@ -16,9 +16,17 @@ Each file is `<folder>/docker-compose-<folder>.yaml`. The compose project name c
 
 ## Settings and secrets
 
-Credentials come from one untracked file, `infra/.env` (variables in the compose files, no literal secrets). Copy
-`.env.example` to `infra/.env` once it exists. Certificates live in `*/certs/` and `nginx/localhost/`; they are
-ignored by git. The Keycloak realm files carry one dev-only client secret: see
+Credentials come from one untracked file, `infra/.env` (variables in the compose files, no literal secrets).
+`scripts/infra-env.sh` creates it from `.env.example` (mode 600, never overwrites; `--check` lists missing variables).
+The example values are invented dev-only placeholders. They only apply to a new data volume: a volume created
+earlier keeps the passwords it was created with, so an existing local stack needs either its own values in the
+gitignored `infra/.env` (put there by its owner) or a clean start.
+
+`scripts/infra-certs.sh` creates the self-signed dev certificate in `nginx/localhost/` and copies it to
+`keycloak/certs/` (renews it when missing, expired or under 7 days left; `--force` regenerates). Certificates are
+ignored by git. The names in the certificate are `localhost`, `127.0.0.1` and `udan-sdk.nistapp` (local dev name).
+PostgreSQL creates the Keycloak database and user on first start from
+`postgres/init/01-create-keycloak-db.sh`. The Keycloak realm files carry one dev-only client secret: see
 [`keycloak/realms/README.md`](keycloak/realms/README.md).
 
 ## Extra routes

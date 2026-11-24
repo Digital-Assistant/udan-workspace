@@ -132,7 +132,18 @@ else
   fail realms
 fi
 
-# 8. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
+# 8. infra-env.sh and infra-certs.sh against a temporary folder.
+if [[ ! -f scripts/test-infra-env-certs.sh ]]; then
+  skip infra-scripts "scripts/test-infra-env-certs.sh does not exist"
+elif ! have openssl; then
+  skip infra-scripts "openssl not installed"
+elif scripts/test-infra-env-certs.sh; then
+  pass infra-scripts
+else
+  fail infra-scripts
+fi
+
+# 9. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
 if (( staged )); then
   skip gitleaks "staged mode: the hook runs gitleaks on the staged change"
 elif ! have gitleaks; then
