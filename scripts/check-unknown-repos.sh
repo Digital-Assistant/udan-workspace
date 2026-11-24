@@ -6,7 +6,7 @@
 #   no arguments   scan every file `git ls-files` lists in the workspace
 #   FILE...        scan these files only
 #   --path DIR     scan the tracked files of another checkout (for example a cloned repository)
-# The manifest is always this workspace's repos.yaml. Matching ignores case.
+# The manifest is always this workspace's repos.yaml. Matching ignores case and treats - and _ as equal.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,7 +41,7 @@ fi
 mapfile -t allowed < <(
   sed -n -E 's/^[[:space:]]*-?[[:space:]]*(path|url):[[:space:]]*([^#[:space:]]+).*/\2/p' "$MANIFEST" |
     sed -E 's#/+$##; s#.*/##; s#\.git$##' |
-    grep -E -i "^${PATTERN}\$" | tr '[:upper:]' '[:lower:]' | sort -u
+    grep -E -i "^${PATTERN}\$" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sort -u
 )
 if (( ${#allowed[@]} == 0 )); then
   echo "FAIL: no repository names found in $MANIFEST" >&2
@@ -58,7 +58,7 @@ for f in "${files[@]}"; do
   [[ -f "$f" ]] || continue
   while IFS=: read -r line match; do
     [[ -n "$line" ]] || continue
-    lower="$(tr '[:upper:]' '[:lower:]' <<<"$match")"
+    lower="$(tr '[:upper:]_' '[:lower:]-' <<<"$match")"
     ok=0
     for a in "${allowed[@]}"; do
       if [[ "$lower" == "$a" ]]; then ok=1; break; fi

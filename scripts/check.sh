@@ -115,7 +115,7 @@ else
 fi
 
 # 6. No file names a repository missing from repos.yaml.
-if scripts/check-unknown-repos.sh; then
+if scripts/check-unknown-repos.sh && { [[ ! -f scripts/test-check-unknown-repos.sh ]] || scripts/test-check-unknown-repos.sh; }; then
   pass unknown-repos
 else
   fail unknown-repos
