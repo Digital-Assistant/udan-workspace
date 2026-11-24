@@ -163,7 +163,8 @@ compose() {
 service_fields() { IFS='|' read -r name folder container wait vols <<<"$1"; }
 stack_containers() { local s name folder container wait vols; for s in "${SERVICES[@]}"; do service_fields "$s"; echo "$container"; done; }
 stack_volumes() { local s name folder container wait vols v; for s in "${SERVICES[@]}"; do service_fields "$s"; for v in $vols; do echo "$v"; done; done; }
-is_stack_container() { stack_containers | grep -qxF -- "$1"; }
+# No pipe into grep -q: under pipefail, grep exiting early can SIGPIPE the writer and fail the test at random.
+is_stack_container() { local names; names="$(stack_containers)"; grep -qxF -- "$1" <<<"$names"; }
 
 docker_ok() { have docker && docker info >/dev/null 2>&1; }
 # container_running NAME: running (a restarting or paused container does not count).
