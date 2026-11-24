@@ -23,10 +23,11 @@ repos:
     url: https://github.com/Digital-Assistant/Digital-Assistant-Server.git
     branch: dev
     visibility: public
-    # Needs JDK 21 on JAVA_HOME. Resolves the locked dependencies and compiles; needs no running services.
+    # Needs JDK 21 on JAVA_HOME (or first on PATH). Resolves the locked dependencies and compiles; needs no running services.
     # Source: README.md "Setup (non-interactive)".
     build: ./gradlew assemble
     needs: java
+    # Run ./sync-credentials.sh once first (creates local-secrets.properties from the workspace infra).
     # Runs pre-flight-check.sh (needs the local infrastructure up), then ./gradlew quarkusDev on port 11081.
     # Source: README.md "Start the Server", start-server.sh.
     run: ./start-server.sh
@@ -37,10 +38,10 @@ repos:
     url: https://github.com/Digital-Assistant/Digital_Assistant_Client.git
     branch: dev
     visibility: public
-    # Needs Node 22. Public settings come from environments/local.env (copy of environments/env.example,
-    # gitignored); a missing file builds with empty values. Output: build/.
+    # Needs Node 22. Public settings come from environments/local.env (gitignored). A missing file is created
+    # from environments/env.example; an existing file is never overwritten. Output: build/.
     # Source: AGENTS.md "npm ci (or npm install), then ... npm run build", package.json scripts.
-    build: npm ci && npm run build
+    build: '[ -f environments/local.env ] || cp environments/env.example environments/local.env; npm ci && npm run build'
     needs: node npm
     # webpack in watch mode; reload the extension on chrome://extensions after each rebuild.
     # Source: README.md "Developers: build and load your own copy", package.json "start".
@@ -51,9 +52,10 @@ repos:
     url: https://github.com/Digital-Assistant/Digital-Assistant-SDK.git
     branch: dev
     visibility: public
-    # Needs Node 22. Settings come from environments/local.env (copy of environments/local.env.example).
+    # Needs Node 22. Settings come from environments/local.env (gitignored). A missing file is created from
+    # environments/local.env.example; an existing file is never overwritten.
     # Output: dist/. Source: README.md "Development", package.json scripts.
-    build: npm ci && npm run build
+    build: '[ -f environments/local.env ] || cp environments/local.env.example environments/local.env; npm ci && npm run build'
     needs: node npm
     # Watch build (--env build=local --mode=development). Source: AGENTS.md, package.json "start".
     run: npm start

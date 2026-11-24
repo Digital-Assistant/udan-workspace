@@ -43,10 +43,12 @@ npm, so the two build on their own. There is no local linking between them.
 
 ## Status
 
-The workspace is not published yet: the clone URL in step 1 below is where it will live. The Server's
-`./start-server.sh` on `dev` still checks for an older local setup; the matching Server change is pending. Until
-it lands, `./udan bootstrap`, `./udan up infra`, `./udan status`, `./udan doctor`, `./udan down` and
-`./udan clean` work as described here, but step 5 cannot start the Server from this workspace yet.
+State on 2026-11-24. The workspace is not published yet: the clone URL in step 1 below is where it will live.
+The Server's `./start-server.sh` on `dev` still checks for an older local setup; the matching Server change
+(reading the workspace `infra/`) is pending. Until it lands, `./udan bootstrap`, `./udan up infra`,
+`./udan status`, `./udan doctor`, `./udan down` and `./udan clean` work as described here, but step 5 cannot
+start the Server from this workspace without a `branch` override for the Server in `repos.local.yaml`.
+Remove this note when the Server change is on `dev`.
 
 ## Requirements
 
@@ -55,9 +57,11 @@ it lands, `./udan bootstrap`, `./udan up infra`, `./udan status`, `./udan doctor
 - For the infrastructure (`up`, `down`, `clean`, `status`, `doctor`, `reload`): Docker with the Compose v2
   plugin (`docker compose`), `git`, `jq`, `openssl` and `curl`.
 - For `./udan bootstrap`: `git`, plus the build tools each repository lists under `needs` in `repos.yaml`:
-  JDK 21 (on `JAVA_HOME` or `PATH`) for the Server, Node 22 and `npm` for the Client and the SDK. A repository
-  whose tools are missing is still cloned, but not built, and `bootstrap` names the missing tool and exits 1.
-  `./udan doctor` reports missing build tools as warnings only.
+  JDK 21 for the Server (`JAVA_HOME` wins over `PATH`; if the `java` on `PATH` is older, run
+  `export JAVA_HOME=/path/to/jdk-21` first, in the shell where you run `./udan`),
+  Node 22 and `npm` for the Client and the SDK. A repository whose tools are missing is still cloned, but not
+  built, and `bootstrap` names the missing tool and exits 1. `./udan doctor` reports missing build tools as
+  warnings only.
 
 ## Quick start
 
@@ -71,14 +75,22 @@ it lands, `./udan bootstrap`, `./udan up infra`, `./udan status`, `./udan doctor
 2. Clone and build the repositories: `./udan bootstrap`. It clones each repository in `repos.yaml` into the
    workspace root and runs its `build` command. On a second run it fast-forwards each checkout that is clean and
    on its branch, and leaves the others as they are, with a warning. It never switches a branch silently and never
-   discards changes. `./udan bootstrap server` limits it to one repository.
+   discards changes. `./udan bootstrap server` limits it to one repository. The SDK and Client builds create
+   `environments/local.env` from the repository's example file when it is missing, and never overwrite an
+   existing one; edit it for your own settings.
 3. Start the shared infrastructure: `./udan up infra`. The first run creates `infra/.env` from
    `infra/.env.example` and a self-signed dev certificate. It exits 1, with the container's last log lines, when
-   MariaDB or Keycloak does not become ready.
+   MariaDB or Keycloak does not become ready. The first run takes several minutes (image pulls, first Keycloak
+   start, about 6 minutes on a clean machine); later runs are much faster.
 4. Check that everything is ready: `./udan doctor`. It exits non-zero and names the fix when a check fails.
 5. Start a repository: run its `run` command from `repos.yaml` in its directory. `./udan up all` starts the
    infrastructure and prints these commands. It does not start the dev servers itself, because each one runs in
-   the foreground.
+   the foreground. Before the first `./start-server.sh`, run `./sync-credentials.sh` once in the Server
+   directory (it writes `src/main/resources/local-secrets.properties`).
+6. Check that the Server answers (it listens on port 11081). Every request needs the `UDAN-Realm` header
+   (`UDAN` or `UDAN-Plugin`): `curl -i -H 'UDAN-Realm: UDAN' http://localhost:11081/api/search/all`. HTTP 401
+   without a token is the expected sign of life; HTTP 400 "UDAN-Realm header is required" means the header is
+   missing. `./udan doctor` does the same check.
 
 ### Commands
 

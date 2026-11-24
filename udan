@@ -209,7 +209,7 @@ missing_tools() {
       java)
         v="$(java_major || true)"
         if [[ -z "$v" ]]; then echo "java $JAVA_MAJOR (set JAVA_HOME or put java on PATH)"
-        elif ((v < JAVA_MAJOR)); then echo "java $JAVA_MAJOR (found $v)"; fi
+        elif ((v < JAVA_MAJOR)); then echo "java $JAVA_MAJOR (found $v; set JAVA_HOME to a JDK $JAVA_MAJOR, for example JAVA_HOME=/path/to/jdk-$JAVA_MAJOR)"; fi
         ;;
       node)
         v="$(node_major || true)"
@@ -966,9 +966,10 @@ doctor_elasticsearch() {
 
 doctor_server() {
   local code
-  code="$(http_code "$SERVER_URL")"
+  # The Server needs the UDAN-Realm header; without a token, HTTP 401 is the expected sign of life.
+  code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'UDAN-Realm: UDAN' "$SERVER_URL" 2>/dev/null || true)"
   if [[ "$code" == "000" || -z "$code" ]]; then doc warn "Server" "not answering on $SERVER_URL (start it from its repository)"
-  else doc ok "Server" "answering on $SERVER_URL (HTTP $code)"; fi
+  else doc ok "Server" "answering on $SERVER_URL (HTTP $code; 401 without a token is expected)"; fi
 }
 
 cmd_doctor() {

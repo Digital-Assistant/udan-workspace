@@ -585,7 +585,7 @@ write_repos "  - name: web
     build: touch built-web.txt
     needs: node npm"
 check "old java: exit 1" rc 1 udan bootstrap
-check "old java: the repository that needs it is named" out_has "app: not built; missing java 21 (found 17)"
+check "old java: the repository that needs it is named" out_has "app: not built; missing java 21 (found 17; set JAVA_HOME to a JDK 21"
 check "old java: the other repository still built" [ -f "$ws/web/built-web.txt" ]
 check "old java: --dry-run fails the same way" rc 1 udan bootstrap app --dry-run
 mv "$bin/java.off" "$bin/java"
