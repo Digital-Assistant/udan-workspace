@@ -3,7 +3,7 @@
 # Usage: scripts/check.sh [--staged]
 #   --staged   lint and link-check only the staged Markdown files (used by the pre-commit hook)
 # Each step prints PASS, SKIP or FAIL. The exit code is non-zero when any step fails.
-# Needs: bash, git, shellcheck, node 22+ with npx. Optional: gitleaks, lychee. Tool versions are pinned below.
+# Needs: bash, git, shellcheck, jq, node 22+ with npx. Optional: gitleaks, lychee. Tool versions are pinned below.
 set -uo pipefail
 
 MARKDOWNLINT_VERSION="0.24.0"
@@ -121,7 +121,18 @@ else
   fail unknown-repos
 fi
 
-# 7. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
+# 7. Public dev Keycloak realm files (names, clients, no secrets beyond the dev value).
+if [[ ! -d infra/keycloak/realms ]]; then
+  skip realms "infra/keycloak/realms does not exist"
+elif ! have jq; then
+  skip realms "jq not installed"
+elif scripts/check-realms.sh; then
+  pass realms
+else
+  fail realms
+fi
+
+# 8. Secret scan of the working tree and history (the pre-commit hook scans the staged change instead).
 if (( staged )); then
   skip gitleaks "staged mode: the hook runs gitleaks on the staged change"
 elif ! have gitleaks; then

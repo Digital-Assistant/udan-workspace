@@ -18,7 +18,8 @@ Each file is `<folder>/docker-compose-<folder>.yaml`. The compose project name c
 
 Credentials come from one untracked file, `infra/.env` (variables in the compose files, no literal secrets). Copy
 `.env.example` to `infra/.env` once it exists. Certificates live in `*/certs/` and `nginx/localhost/`; they are
-ignored by git.
+ignored by git. The Keycloak realm files carry one dev-only client secret: see
+[`keycloak/realms/README.md`](keycloak/realms/README.md).
 
 ## Extra routes
 

@@ -56,7 +56,9 @@ ignores `certs/`, `*.pem`, `*.key` and `*.crt`.
 The public client `udan-extension` uses authorization code with PKCE (S256). It has no secret and no direct
 grants. Its redirect URI is `https://<extension-id>.chromiumapp.org/*`. A realm import seeds only a fresh Keycloak:
 a running Keycloak with an older realm keeps its clients until the realm is changed through the admin API or the
-volume is wiped. Development credentials come from a local `.env` file and are never committed.
+volume is wiped. Development credentials come from a local `.env` file and are never committed. The one
+exception is the dev-only `backend-service` secret in the realm files; see
+[the realms README](../../infra/keycloak/realms/README.md).
 
 ## Read next
 
