@@ -41,15 +41,6 @@ without being named.
 The build and run commands for each repository are in [`repos.yaml`](repos.yaml). The Client takes the SDK from
 npm, so the two build on their own. There is no local linking between them.
 
-## Status
-
-State on 2026-11-24. The workspace is not published yet: the clone URL in step 1 below is where it will live.
-The Server's `./start-server.sh` on `dev` still checks for an older local setup; the matching Server change
-(reading the workspace `infra/`) is pending. Until it lands, `./udan bootstrap`, `./udan up infra`,
-`./udan status`, `./udan doctor`, `./udan down` and `./udan clean` work as described here, but step 5 cannot
-start the Server from this workspace without a `branch` override for the Server in `repos.local.yaml`.
-Remove this note when the Server change is on `dev`.
-
 ## Requirements
 
 - Linux, or Windows with WSL2. macOS is not supported: `./udan` needs bash 4.4 or later and GNU coreutils
@@ -65,7 +56,7 @@ Remove this note when the Server change is on `dev`.
 
 ## Quick start
 
-1. Clone the workspace (see [Status](#status)):
+1. Clone the workspace:
 
    ```bash
    git clone https://github.com/Digital-Assistant/udan-workspace.git
@@ -117,6 +108,11 @@ Your team may use repositories that are not public. List them in `repos.local.ya
 The same file overrides fields of a listed repository: `url` (also a local folder), `path`, `branch`, `build`,
 `run`, `ref` and `needs`. A `path` must be a folder inside the workspace. With `in_place: true`, the path may be
 anywhere and `./udan bootstrap` uses that existing checkout as it is: no clone, no pull and no branch switch.
+
+An override of `url` or `branch` for a repository that is already cloned does not change that checkout.
+`./udan bootstrap` warns ("origin is ..., the manifest says ... (left as is)" or "on '...', not '...'; not
+updated") and leaves it as it is. To apply the override, switch the checkout yourself, or remove the folder and
+run `./udan bootstrap <name>` again.
 
 A `ref` (tag or commit) is checked out right after a clone, or later when the checkout is clean and on its
 `branch`. On another branch `./udan bootstrap` warns and leaves it.
