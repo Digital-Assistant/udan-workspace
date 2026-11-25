@@ -238,7 +238,7 @@ export UDAN_KEYCLOAK_URL="http://127.0.0.1:9" UDAN_ES_URL="http://127.0.0.1:9" U
 
 reset_state() { rm -rf "$FAKE_DIR"; mkdir -p "$FAKE_DIR"; : >"$FAKE_LOG"; }
 reset_state
-st() { cat "$FAKE_DIR/$1" 2>/dev/null | sort | paste -sd ' '; }
+st() { sort "$FAKE_DIR/$1" 2>/dev/null | paste -sd ' '; }
 
 # --- workspace copy (a git repository with an origin, like a real clone) ----------------------------------------
 ws="$tmp/ws"
