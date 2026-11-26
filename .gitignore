@@ -10,6 +10,7 @@
 !/repos.yaml
 !/repos.local.example.yaml
 !/udan
+!/udan.ps1
 !/docs/
 !/infra/
 !/scripts/
@@ -17,6 +18,7 @@
 !/lefthook.yml
 !/.markdownlint*
 !/.editorconfig
+!/.gitattributes
 
 # Local files. These rules come after the allow-list, so they always win.
 /AGENTS.local.md

@@ -54,6 +54,16 @@ npm, so the two build on their own. There is no local linking between them.
   built, and `bootstrap` names the missing tool and exits 1. `./udan doctor` reports missing build tools as
   warnings only.
 
+### Windows (WSL 2)
+
+Windows is supported through WSL 2, because `./udan` needs bash and GNU coreutils. In PowerShell use
+`.\udan.ps1` instead of `./udan`; it runs the same script inside the Ubuntu distribution. On first use it installs
+JDK 21, Node 22 and `jq` into your WSL home (no sudo). Before the first `up`, enable Docker Desktop's WSL
+integration for Ubuntu and give the Docker VM enough memory for Elasticsearch (8 GB is safe on a 16 GB machine).
+If `./udan` reports `/usr/bin/env: 'bash\r'`, the checkout has CRLF line endings: run
+`bash scripts/fix-line-endings.sh` once. Full steps, the changes this checkout needed and troubleshooting are in
+[`docs/windows-setup.md`](docs/windows-setup.md).
+
 ## Quick start
 
 1. Clone the workspace:

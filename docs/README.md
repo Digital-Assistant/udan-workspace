@@ -15,6 +15,7 @@ its own docs for its internals; the pages here link to them and do not repeat th
 | [`flows/auth-oidc.md`](flows/auth-oidc.md) | Sign-in, token checks and tenant selection |
 | [`flows/record-sequence.md`](flows/record-sequence.md) | Recording a click sequence, and ownership |
 | [`flows/search.md`](flows/search.md) | Searching recorded sequences |
+| [`windows-setup.md`](windows-setup.md) | Running the workspace on Windows with WSL 2: setup, changes made, troubleshooting |
 | [`adr/README.md`](adr/README.md) | Decisions that bind more than one repository |
 | [`likec4/model.c4`](likec4/model.c4) | Architecture model of the public parts (LikeC4) |
 
